@@ -290,10 +290,14 @@ function Invoke-CmdVersion {
     if (-not $pyexasol) { $pyexasol = "not installed" }
     Write-Host "pyexasol:       $pyexasol"
     if (Test-ExakitUpdatesPending) {
+        # The same framed panel the connection details use, rather than three loose
+        # lines that read like an error: this is good news, and it is the only thing
+        # on this screen the reader might want to act on.
         Write-Host ""
-        Write-Host "New versions are available."
-        Write-Host "See what's new:  exakit update-check"
-        Write-Host "Update:          exakit update"
+        Start-ExakitPanel "Updates available"
+        Write-ExakitPanelLine "See what's new   exakit update-check"
+        Write-ExakitPanelLine "Apply them       exakit update"
+        Complete-ExakitPanel
     }
 }
 
