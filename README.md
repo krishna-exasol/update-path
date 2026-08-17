@@ -15,16 +15,42 @@
 [![Community](https://img.shields.io/badge/community-exasol-green)](https://community.exasol.com)
 [![Quickstart](https://img.shields.io/badge/first%20query-under%202%20min-orange)](QUICKSTART.md)
 
-**macOS / Linux / WSL**
+**A — current: fenced block (baseline)**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/krishna-exasol/update-path/main/install.sh | sh
+curl https://www.exasol.com/install/starter-kit.sh | sh
 ```
 
-**Windows (PowerShell)**
+**B — `<center>` tag around the fenced block**
 
-```powershell
-irm https://raw.githubusercontent.com/krishna-exasol/update-path/main/install.ps1 | iex
+<center>
+
+```bash
+curl https://www.exasol.com/install/starter-kit.sh | sh
+```
+
+</center>
+
+**C — hand-written `<pre>` (no fence)**
+
+<pre>curl https://www.exasol.com/install/starter-kit.sh | sh</pre>
+
+**D — `<pre align="center">`**
+
+<pre align="center">curl https://www.exasol.com/install/starter-kit.sh | sh</pre>
+
+**E — inline code in a centred paragraph**
+
+<p align="center"><code>curl https://www.exasol.com/install/starter-kit.sh | sh</code></p>
+
+**F — `<kbd>` in a centred paragraph**
+
+<p align="center"><kbd>curl https://www.exasol.com/install/starter-kit.sh | sh</kbd></p>
+
+**G — fenced block padded with leading spaces**
+
+```bash
+                    curl https://www.exasol.com/install/starter-kit.sh | sh
 ```
 
 **Prefer to let your AI do it?** Paste this into Claude Code, Codex, or any coding agent:
