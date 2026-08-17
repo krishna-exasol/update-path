@@ -15,16 +15,28 @@
 [![Community](https://img.shields.io/badge/community-exasol-green)](https://community.exasol.com)
 [![Quickstart](https://img.shields.io/badge/first%20query-under%202%20min-orange)](QUICKSTART.md)
 
-**macOS / Linux / WSL**
+**H — fenced block wrapped in `<div align="center">` (your idea)**
+
+<div align="center">
+
+```bash
+curl https://www.exasol.com/install/starter-kit.sh | sh
+```
+
+</div>
+
+**I — hand-written `<pre>` wrapped in `<div align="center">`**
+
+<div align="center">
+
+<pre>curl https://www.exasol.com/install/starter-kit.sh | sh</pre>
+
+</div>
+
+**G — padded fence (32 spaces), for comparison**
 
 ```bash
                                 curl https://www.exasol.com/install/starter-kit.sh | sh
-```
-
-**Windows (PowerShell)**
-
-```powershell
-                                irm https://www.exasol.com/install/starter-kit.ps1 | iex
 ```
 
 **Prefer to let your AI do it?** Paste this into Claude Code, Codex, or any coding agent:
