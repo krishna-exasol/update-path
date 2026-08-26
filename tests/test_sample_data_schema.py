@@ -321,10 +321,22 @@ class LoadWiringTests(unittest.TestCase):
                 # Same platform split as the menu label above: bash names JSON,
                 # PowerShell does not because the add-on that handles it is not
                 # available there.
+                # The empty-input reminder ends "…, a folder of them, or type
+                # back to return." since bulk folder loading landed. It used to
+                # end in "file path"; the wording moved and these assertions did
+                # not, which is what turned main red.
                 if menu_name == EXAPUMP_PS1.name:
-                    self.assertIn("Please enter a local CSV/Parquet file path", local_file_flow)
+                    self.assertIn(
+                        "Please enter a local CSV/Parquet file, a folder of them, "
+                        "or type back to return.",
+                        local_file_flow,
+                    )
                 else:
-                    self.assertIn("Please enter a local CSV, Parquet or JSON file path", local_file_flow)
+                    self.assertIn(
+                        "Please enter a local CSV, Parquet or JSON file, a folder of them, "
+                        "or type back to return.",
+                        local_file_flow,
+                    )
                 self.assertIn("back to return", local_file_flow)
                 self.assertIn("Returning to data loading options.", local_file_flow)
 
