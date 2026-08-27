@@ -537,7 +537,14 @@ exapump_count_many() {
     _ecm_out="$("$(exapump_cli)" sql -p "$EXAKIT_EXAPUMP_PROFILE" "$_ecm_sql" 2>/dev/null | \
         grep -oE 'EXAKIT_RC\[[A-Za-z0-9_]+=[0-9]+\]' | \
         sed -e 's/^EXAKIT_RC\[//' -e 's/\]$//' -e 's/=/ /')"
-    _ecm_got="$(printf '%s' "$_ecm_out" | grep -c . 2>/dev/null || printf 0)"
+    # Deliberately not "grep -c . || printf 0": on empty input grep PRINTS 0
+    # and EXITS 1, so the fallback fires too and the count reads "00". It would
+    # still be caught by the comparison below, but only by accident.
+    _ecm_got=0
+    if [ -n "$_ecm_out" ]; then
+        _ecm_got="$(printf '%s
+' "$_ecm_out" | grep -c .)"
+    fi
     [ "$_ecm_got" = "$_ecm_want" ] || return 1
     printf '%s\n' "$_ecm_out"
 }
