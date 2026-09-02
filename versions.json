@@ -56,7 +56,7 @@
       }
     },
     "json-tables": {
-      "version": "v0.2",
+      "version": "v0.3",
       "severity": "normal",
       "wheel": "exasol_json_tables-0.2.0-py3-none-any.whl",
       "sha256": {
