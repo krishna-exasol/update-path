@@ -72,7 +72,7 @@ The installer does this too. To run it again: `exakit mcp-setup`. Details in the
 Windows apps can reach the database directly at `127.0.0.1:8563`. If you configure a Windows desktop app from inside WSL, make sure its config uses a launcher command Windows can run. Two options:
 
 - Install `uv` on Windows and use the path from `(Get-Command uvx).Source` as the command
-- Or keep the same settings and wrap the launch as `wsl uvx exasol-mcp-server@<version>`
+- Or launch through WSL — as a command **plus arguments**, never one string: the command is `wsl`, the arguments are `--`, `uvx`, `exasol-mcp-server@<version>`. (A single string `wsl uvx ...` is not a program name Windows can spawn.) One more catch: the config's `env` block sets variables for `wsl.exe` on the Windows side, not inside the distro — forward each one by inserting `env`, `NAME=value` pairs into the arguments before `uvx`. If that sounds fiddly, it is: the first option is the reliable one.
 
 Then continue with the [first workflow](../demo/first-revenue-analysis.md).
 

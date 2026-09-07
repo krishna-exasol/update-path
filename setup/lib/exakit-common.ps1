@@ -2962,7 +2962,10 @@ function Update-ExakitSkills {
     if (-not $shown) { $shown = "not installed" }
     Info "Updating AI skills $shown -> $Advertised"
     $tmpZip = Join-Path ([System.IO.Path]::GetTempPath()) "exakit-skills-$([guid]::NewGuid().ToString('N')).zip"
-    $stage = Join-Path ([System.IO.Path]::GetTempPath()) "exakit-skills-stage-$([guid]::NewGuid().ToString('N'))"
+    # Beside the kit, not in TEMP: Move-Item cannot move a directory across
+    # volumes, so an EXAKIT_HOME on another drive broke the backup-swap below.
+    # See the same fix in Update-ExakitSelf.
+    $stage = Join-Path $script:ExakitHome ".skills-stage-$([guid]::NewGuid().ToString('N'))"
     try {
         Invoke-WebRequest -Uri "https://github.com/$($script:KitRepo)/archive/refs/heads/main.zip" -OutFile $tmpZip -UseBasicParsing -TimeoutSec 300
     } catch {
@@ -3028,7 +3031,14 @@ function Update-ExakitSelf {
     Info "Updating starter kit $shown -> $Advertised"
 
     $tmpZip = Join-Path ([System.IO.Path]::GetTempPath()) "exakit-kit-$([guid]::NewGuid().ToString('N')).zip"
-    $stage = Join-Path ([System.IO.Path]::GetTempPath()) "exakit-kit-stage-$([guid]::NewGuid().ToString('N'))"
+    # The stage lives BESIDE the kit, never in TEMP: Move-Item cannot move a
+    # DIRECTORY across volumes, so with EXAKIT_HOME on another drive the swap
+    # threw every time, the deferred finisher failed the same way after exit -
+    # and the new version was recorded anyway, after which `exakit update`
+    # reported current forever over a kit that never changed. Same volume by
+    # construction makes the swap a rename again. (The zip may stay in TEMP:
+    # Expand-Archive writes across volumes fine.)
+    $stage = Join-Path $script:ExakitHome ".kit-stage-$([guid]::NewGuid().ToString('N'))"
     # main first - that is what install.ps1 fetches, and kit script changes live on
     # main: a tag exists only where a release was cut. The tag URLs stay behind it
     # so a kit installed from a tagged release still updates.

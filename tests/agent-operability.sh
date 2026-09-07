@@ -995,6 +995,31 @@ print('%s|%s|%s' % (d['installing'], d['install_step'],
 # only where a terminal is rendering.
 has "the panel width cap is tty-gated" '[ -t 1 ]' \
     "$(sed -n '/^ui_panel_end()/,/^}/p' "$ROOT/setup/lib/ui.sh")"
-
+echo "windows and wsl keep their promises:"
+_ps_inst="$(cat "$ROOT/install.ps1")"
+# WIN-05: HTTPS_PROXY is honoured by the download, not just documented -
+# Invoke-WebRequest ignores the environment variable on its own - and a 407 is
+# named as the proxy refusing, not a generic network failure.
+has "the installer passes HTTPS_PROXY explicitly" '$webArgs["Proxy"] = $env:HTTPS_PROXY' "$_ps_inst"
+has "...and names a 407 for what it is" "HTTP 407, authentication required" "$_ps_inst"
+# WIN-06: Group Policy outranks -ExecutionPolicy Bypass; the installer detects
+# the pinned policy before downloading anything and names the real fix.
+has "GPO-pinned execution policy is detected up front" 'Get-ExecutionPolicy -Scope $gpoScope' "$_ps_inst"
+# WIN-07: Move-Item cannot move a directory across volumes, so the update
+# stages BESIDE the kit, never in TEMP - or an EXAKIT_HOME on another drive
+# recorded a version it never installed.
+_ps_common_w="$(cat "$ROOT/setup/lib/exakit-common.ps1")"
+has "the kit update stages beside the kit"   '.kit-stage-' "$_ps_common_w"
+has "...and the skills update does too"      '.skills-stage-' "$_ps_common_w"
+lacks "no stage directory lives in TEMP" 'GetTempPath()) "exakit-kit-stage' "$_ps_common_w"
+# WIN-08: chmod is a no-op on Windows; the Python runtime protects secrets
+# with an owner-only ACL there and never reports a protection it did not apply.
+has "the python runtime uses an ACL on Windows" '"icacls", str(path)' "$(cat "$ROOT/mcp/security/policy.py")"
+has "...and posix keeps the 0600 chmod" 'stat.S_IRUSR | stat.S_IWUSR' "$(cat "$ROOT/mcp/security/policy.py")"
+# WSL-04: the after-a-restart promise names WSL's exception instead of lying.
+has "the restart promise carries the WSL exception" "WSL is the exception" "$(cat "$ROOT/AGENTS.md")"
+# WSL-06: the WSL launch wrapper is a command plus arguments, never one string.
+lacks "no doc offers the unspawnable one-string wsl wrapper" 'wsl uvx exasol-mcp-server' \
+    "$(cat "$ROOT/quickstarts/windows-wsl.md")"
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
