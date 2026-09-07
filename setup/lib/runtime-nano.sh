@@ -28,6 +28,19 @@ EXAKIT_NANO_READY_TIMEOUT="${EXAKIT_NANO_READY_TIMEOUT:-600}"
 # (see nano_repair_creds); pulled on demand, never on the happy path.
 EXAKIT_NANO_REPAIR_IMAGE="${EXAKIT_NANO_REPAIR_IMAGE:-docker.io/library/busybox:stable}"
 
+# _exakit_selinux_enforcing — is SELinux actually enforcing on this host?
+# getenforce where it exists, the kernel's own answer where it does not.
+# Anything unreadable is "no": the label this gates is only NEEDED under
+# enforcement, and a wrong "yes" would hand :z to engines that reject it.
+_exakit_selinux_enforcing() {
+    if command -v getenforce >/dev/null 2>&1; then
+        [ "$(getenforce 2>/dev/null)" = "Enforcing" ]
+        return $?
+    fi
+    [ -r /sys/fs/selinux/enforce ] && \
+        [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = "1" ]
+}
+
 # nano_engine — the usable container engine, cached after first call.
 nano_engine() {
     if [ -z "${EXAKIT_NANO_ENGINE:-}" ]; then
@@ -592,10 +605,14 @@ nano_install() {
             store_credential nano_sys_password "$_password"
         fi
 
-        # SELinux systems (Fedora, RHEL) need the :z label on bind mounts;
-        # harmless elsewhere, so apply it for podman across the board.
+        # SELinux systems (Fedora, RHEL) need the :z label on bind mounts —
+        # DETECTED, not inferred from the engine name. The old test keyed on
+        # podman, which matched a correlation: Docker on Fedora (the README's
+        # own preference) needs the label exactly as much, could not read the
+        # bind-mounted password without it, and misread the result as an empty
+        # secret file; Podman on Ubuntu never needed it at all.
         _secret_mount="${EXAKIT_CREDS_DIR}/nano_sys_password:/run/secrets/sys_password:ro"
-        [ "$_engine" = "podman" ] && _secret_mount="${_secret_mount},z"
+        _exakit_selinux_enforcing && _secret_mount="${_secret_mount},z"
 
         # The secret must exist as a regular NON-EMPTY file before the engine
         # sees the bind mount. Two distinct hazards, one guard:
