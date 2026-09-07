@@ -21,7 +21,7 @@
     "already had the kit working and wants to know what is different."
   ],
   "0.2.0": [
-    "exakit marketplace adds dashboards, VS Code and JSON loading.",
+    "exakit marketplace: dashboards, VS Code, JSON loading, a scheduler.",
     "exakit update applies the recommended version set, AI skills too.",
     "exakit version shows installed and recommended versions.",
     "exakit sql runs SQL or a file, and --json returns one object.",
