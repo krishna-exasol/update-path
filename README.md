@@ -88,21 +88,6 @@ You already use AI. The hard part is trusting it with your data. This kit gives 
 
 **No Python install needed** on any platform: the kit uses a system Python 3.11+ when it finds one, and otherwise installs a managed Python for its own use.
 
-Not sure? Check first. It installs **nothing**:
-
-**macOS / Linux / WSL**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/krishna-exasol/update-path/main/install.sh | EXAKIT_PREFLIGHT=1 sh
-```
-
-**Windows (PowerShell)** — there is no `sh` there, and `curl` is an alias for `Invoke-WebRequest`, so set the variable first:
-
-```powershell
-$env:EXAKIT_PREFLIGHT = '1'
-irm https://raw.githubusercontent.com/krishna-exasol/update-path/main/install.ps1 | iex
-```
-
 Step-by-step guides: [QUICKSTART](QUICKSTART.md) · [macOS](quickstarts/macos.md) · [WSL](quickstarts/windows-wsl.md) · [Windows + Docker](quickstarts/windows-docker.md)
 
 ### Installing: what to expect
