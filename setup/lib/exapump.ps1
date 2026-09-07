@@ -1248,10 +1248,32 @@ function Import-ExakitLocalFile {
         # answered by the same prompt (and the same EXAKIT_DATA_FILE) as a single
         # file, because "here is my data" is the same request either way.
         if (Test-Path $path -PathType Container) { return (Import-ExakitLocalFolder -Path $path) }
-        if ((Test-Path $path) -and (Get-Item $path).Length -gt 0) { break }
+        if ((Test-Path $path) -and (Get-Item $path).Length -gt 0) {
+            # Refuse what the loader cannot take BEFORE it runs. Twin of the same
+            # check in exakit_load_local_file: an unsupported file used to die
+            # inside the loader and be recorded as a failed step.
+            $llfKind = Get-ExakitDataFileKind $path
+            $llfName = [System.IO.Path]::GetFileName($path).ToLowerInvariant()
+            if ($llfKind -eq "unknown" -or ($llfKind -eq "csv" -and $llfName.EndsWith(".txt"))) {
+                if (-not (Test-ExakitInteractive)) {
+                    Write-Host ""; Write-Host "  [x] Cannot load '$llfName': only .csv, .tsv, .parquet (and .json with the JSON Tables add-on) are supported - rename or convert the file first."
+                    exit 2
+                }
+                Warn2 "Only .csv, .tsv, .parquet (and .json with the JSON Tables add-on) can be loaded: $llfName"
+                continue
+            }
+            if ($llfKind -eq "csv") {
+                $llfHead = ""
+                try { $llfHead = (Get-Content -Path $path -TotalCount 1 -ErrorAction Stop) } catch { }
+                if ("$llfHead" -notmatch ',' -and ("$llfHead" -match ';' -or "$llfHead" -match "`t")) {
+                    Warn2 "The header of $llfName has no comma but a ';' or tab - exapump splits on ',' and would load it as ONE column. Convert the file, or load it with: exapump upload --delimiter ';' -p $script:ExapumpProfile ..."
+                }
+            }
+            break
+        }
         Warn2 "File not found or empty: $path"
         if (-not (Test-ExakitInteractive)) {
-            Fail "File not found or empty: $path"
+            Write-Host ""; Write-Host "  [x] File not found or empty: $path"; exit 2
         }
     }
     $kind = Get-ExakitDataFileKind $path

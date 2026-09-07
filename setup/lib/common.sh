@@ -84,6 +84,9 @@ EXAKIT_PYEXASOL_VERSION_FALLBACK="${EXAKIT_PYEXASOL_VERSION_FALLBACK:-2.3.2}"
 EXAKIT_PERSONAL_REPO="exasol/exasol-personal"
 EXAKIT_EXAPUMP_REPO="exasol-labs/exapump"
 EXAKIT_NANO_IMAGE="exasol/nano"
+# Captured before the default lands: the manifest resolution below must never
+# outrank an answer the caller gave in the environment.
+_EXAKIT_KIT_REPO_FROM_ENV="${EXAKIT_KIT_REPO:-${EXAKIT_REPO:-}}"
 EXAKIT_KIT_REPO="${EXAKIT_KIT_REPO:-${EXAKIT_REPO:-krishna-exasol/update-path}}"
 EXAKIT_VERSION_LOOKUP_CONNECT_TIMEOUT="${EXAKIT_VERSION_LOOKUP_CONNECT_TIMEOUT:-5}"
 EXAKIT_VERSION_LOOKUP_MAX_TIME="${EXAKIT_VERSION_LOOKUP_MAX_TIME:-12}"
@@ -94,7 +97,52 @@ EXAKIT_VERSION_LOOKUP_MAX_TIME="${EXAKIT_VERSION_LOOKUP_MAX_TIME:-12}"
 # trust domain that already serves install.sh — and cached under the kit home.
 # Nothing is collected on our side: the request carries a User-Agent header and
 # no query string, and no third party is involved.
+_EXAKIT_VERSIONS_URL_FROM_ENV="${EXAKIT_VERSIONS_URL:-}"
 EXAKIT_VERSIONS_URL="${EXAKIT_VERSIONS_URL:-https://raw.githubusercontent.com/${EXAKIT_KIT_REPO}/main/versions.json}"
+
+# --- an installed kit follows its own source ---------------------------------
+#
+# EXAKIT_KIT_REPO names the repository this kit copy talks to at runtime: the
+# versions manifest above, `exakit update exakit` (which replaces this very
+# kit), and the skills refresh all download from it. Its default is the
+# repository the product is published from - right for a fresh curl|sh, and
+# silently wrong for every kit installed from a fork. The manifest records
+# where a kit really came from (kit.source), and the release assets already
+# follow it (json_tables_mirror_repo) - but these URLs kept pointing at the
+# default. The result was a split brain no fork install could verify: add-on
+# assets downloaded from the fork, digest pins fetched from the default, and
+# every install ending in a checksum mismatch that looked like corruption.
+# Worse, `exakit update exakit` would quietly replace a fork's kit with the
+# default repository's code.
+#
+# So when the environment named no repository, the manifest decides. An
+# explicit EXAKIT_KIT_REPO / EXAKIT_REPO / EXAKIT_VERSIONS_URL still outranks
+# it - pointing one command somewhere else is a deliberate act. Self-contained
+# on purpose: manifest_get is not defined yet and requires python3 fatally,
+# while a kit source is three fields of one line - and a machine with no
+# python3, or no manifest, simply keeps the default.
+if [ -z "$_EXAKIT_KIT_REPO_FROM_ENV" ] && [ -f "$EXAKIT_MANIFEST" ] && \
+   command -v python3 >/dev/null 2>&1; then
+    _ekr_src="$(python3 - "$EXAKIT_MANIFEST" <<'EXAKIT_KIT_SRC_PY' 2>/dev/null
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(1)
+src = ((doc.get("kit") or {}).get("source") or "").strip()
+repo = src.split("@", 1)[0]
+parts = repo.split("/")
+ok = (len(parts) == 2 and all(p and all(c.isalnum() or c in "._-" for c in p)
+                              for p in parts))
+print(repo if ok else "")
+EXAKIT_KIT_SRC_PY
+)" || _ekr_src=""
+    if [ -n "$_ekr_src" ]; then
+        EXAKIT_KIT_REPO="$_ekr_src"
+        [ -z "$_EXAKIT_VERSIONS_URL_FROM_ENV" ] && \
+            EXAKIT_VERSIONS_URL="https://raw.githubusercontent.com/${EXAKIT_KIT_REPO}/main/versions.json"
+    fi
+fi
 # The public install entry point, which is NOT the raw repository URL: someone
 # reinstalling months from now should be sent to the address the product
 # publishes, not to a branch of whichever repository built their copy.
@@ -2954,6 +3002,7 @@ exakit_component_current() {
 # impossible here no matter what a future add-on shells out to.
 exakit_marketplace_addons() {
     printf '%s\n' "dash-server|dash-server (AI dashboard host)"
+    printf '%s\n' "exasol-scheduler|Exasol Scheduler (SQL jobs on a schedule)"
     printf '%s\n' "exasol-vscode|Exasol for VS Code (editor extension)"
     printf '%s\n' "json-tables|JSON Tables (JSON into Exasol)"
 }
@@ -5957,15 +6006,37 @@ exakit_acquire_lock() {
     _lock="$EXAKIT_HOME/.install.lock"
     mkdir -p "$EXAKIT_HOME"
     if [ -f "$_lock" ]; then
-        _pid="$(cat "$_lock" 2>/dev/null)"
-        if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+        _pid="$(sed -n 1p "$_lock" 2>/dev/null)"
+        if exakit_lock_holder_alive "$_lock"; then
             die "Another setup run is already in progress (pid $_pid). Wait for it to finish; if you are sure it is dead, remove $_lock and re-run."
         fi
         warn "Found a lock from an interrupted run — removing it and continuing"
         rm -f "$_lock"
     fi
-    printf '%s' "$$" > "$_lock"
+    # Line 1 the pid, line 2 the process start time. A pid alone is reused by
+    # the OS, and a crashed installer's pid landing on an unrelated process kept
+    # `exakit status` saying "installing" until that process exited.
+    printf '%s\n%s\n' "$$" "$(exakit_process_start_time "$$")" > "$_lock"
     EXAKIT_LOCK_FILE="$_lock"
+}
+
+# exakit_process_start_time <pid> — the start time ps reports, trimmed; empty
+# when ps cannot say. `lstart` is the one column macOS and Linux ps share.
+exakit_process_start_time() {
+    ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//;s/ *$//' | head -n 1
+}
+
+# exakit_lock_holder_alive <lockfile> — true only when the pid in the lock is
+# alive AND (if the lock recorded one) started when the lock says it did. An
+# old one-line lock without a start time falls back to the pid check.
+exakit_lock_holder_alive() {
+    [ -f "${1:-}" ] || return 1
+    _lha_pid="$(sed -n 1p "$1" 2>/dev/null)"
+    _lha_start="$(sed -n 2p "$1" 2>/dev/null)"
+    [ -n "$_lha_pid" ] || return 1
+    kill -0 "$_lha_pid" 2>/dev/null || return 1
+    [ -n "$_lha_start" ] || return 0
+    [ "$(exakit_process_start_time "$_lha_pid")" = "$_lha_start" ]
 }
 
 exakit_release_lock() {
@@ -8584,6 +8655,11 @@ exakit_maybe_offer_data_load() {
         if [ "$_local_status" -eq 2 ]; then
             _data_notes="${_data_notes}info|Local file load skipped.
 "
+        elif [ "$_local_status" -eq 3 ]; then
+            # Refused as bad input (the file, not the install): say so, but
+            # do not book it as a failed step.
+            _data_notes="${_data_notes}warn|The local file was refused (see above). Load another any time with: exakit data-load
+"
         elif [ "$_local_status" -ne 0 ]; then
             _data_notes="${_data_notes}warn|Data loading did not finish cleanly. Retry any time with: exakit data-load
 "
@@ -9999,6 +10075,10 @@ _exakit_autostart_register() {
                 printf '  <key>StandardErrorPath</key><string>%s/autostart-%s.log</string>\n' "$EXAKIT_LOG_DIR" "$_ar_id"
                 printf '</dict>\n</plist>\n'
             } > "$_ar_plist" || { warn "Could not write $_ar_plist"; return 1; }
+            # launchd creates the log with the default umask (0644). Every other
+            # kit log is owner-only; create these first so they are too.
+            ( umask 077; : >> "$EXAKIT_LOG_DIR/autostart-$_ar_id.log" ) 2>/dev/null
+            chmod 600 "$EXAKIT_LOG_DIR/autostart-$_ar_id.log" 2>/dev/null
             # Load it now so the entry is live without a logout, and so a
             # rewritten plist replaces the old registration.
             launchctl unload "$_ar_plist" >/dev/null 2>&1

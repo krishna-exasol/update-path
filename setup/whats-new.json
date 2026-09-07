@@ -44,5 +44,13 @@
     "mcp-doctor blames only the client whose config drifted.",
     "mcp-setup re-offers a client whose config lost the kit's entry.",
     "SELECT TOP and a busy-port TLS failure now come with a hint."
+  ],
+  "0.2.5": [
+    "exakit sql --json handles any result size and reports row_count.",
+    "exakit mcp-remove <client> drops the kit's entries from a client.",
+    "mcp-doctor repairs warnings; add-ons reach connected clients only.",
+    "Every command refuses an unknown option with exit 2, before acting.",
+    "A crashed installer no longer leaves status saying installing.",
+    "Unsupported data files are refused up front, never a failed step."
   ]
 }

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "updated": "2026-09-07",
   "kit": {
-    "version": "0.2.4"
+    "version": "0.2.5"
   },
   "components": {
     "personal": {
@@ -37,13 +37,18 @@
       "severity": "normal"
     },
     "skills": {
-      "version": "1.8.1",
+      "version": "1.9.1",
       "severity": "normal"
     },
     "dash-server": {
       "version": "0.1.0",
       "repo": "exasol-labs/dash-server",
       "package": "dash-server",
+      "severity": "normal"
+    },
+    "exasol-scheduler": {
+      "version": "v0.2",
+      "release": "exasol-scheduler-v0.2",
       "severity": "normal"
     },
     "exasol-vscode": {
