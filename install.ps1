@@ -74,7 +74,10 @@ trap {
     # note that outlived its cause is how a healthy machine looks broken.
     # Best-effort: a note is a nicety and must not mask the real error.
     try {
-        $failHome = if ($env:EXAKIT_HOME) { $env:EXAKIT_HOME } else { Join-Path $HOME ".exasol-starter-kit" }
+        # USERPROFILE first, matching the resolution below: the note must land
+        # where the next `exakit status --json` will actually look for it.
+        $failBase = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+        $failHome = if ($env:EXAKIT_HOME) { $env:EXAKIT_HOME } else { Join-Path $failBase ".exasol-starter-kit" }
         New-Item -ItemType Directory -Force -Path $failHome -ErrorAction SilentlyContinue | Out-Null
         $stamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
         Set-Content -Path (Join-Path $failHome ".last-failure") `
@@ -83,7 +86,27 @@ trap {
     exit 1
 }
 
-$ExakitHome = if ($env:EXAKIT_HOME) { $env:EXAKIT_HOME } else { Join-Path $HOME ".exasol-starter-kit" }
+# Twin of Get-ExakitHomeBase in exakit-common.ps1: exakit resolves its home
+# from USERPROFILE (an existing install still winning, wherever it sits),
+# while this file used $HOME - so on a domain machine with a redirected home
+# the install landed in one tree, every later `exakit` looked in another, the
+# install reported "not installed", and re-running never converged. One
+# resolution, and the result is EXPORTED so the setup run and everything it
+# starts agree with it.
+function Get-ExakitInstallHomeBase {
+    $base = $env:USERPROFILE
+    if (-not $base) { return $HOME }
+    if ($base -eq $HOME) { return $base }
+    if (Test-Path (Join-Path $base ".exasol-starter-kit\manifest.json")) { return $base }
+    # A redirected $HOME can be a disconnected share where Test-Path blocks;
+    # tolerate that here - this runs once per install, not per command.
+    try {
+        if (Test-Path (Join-Path $HOME ".exasol-starter-kit\manifest.json")) { return $HOME }
+    } catch { }
+    return $base
+}
+$ExakitHome = if ($env:EXAKIT_HOME) { $env:EXAKIT_HOME } else { Join-Path (Get-ExakitInstallHomeBase) ".exasol-starter-kit" }
+$env:EXAKIT_HOME = $ExakitHome
 $Repo       = if ($env:EXAKIT_REPO) { $env:EXAKIT_REPO } else { "krishna-exasol/update-path" }
 $Ref        = if ($env:EXAKIT_REF)  { $env:EXAKIT_REF }  else { "main" }
 $KitDir     = Join-Path $ExakitHome "kit"
