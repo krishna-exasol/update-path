@@ -180,6 +180,10 @@ EXAKIT_ABOUT_MAX_LEN="${EXAKIT_ABOUT_MAX_LEN:-200}"
 # The table's rule is 74 columns and the two leading cells spend 30 of them.
 EXAKIT_ABOUT_WIDTH="${EXAKIT_ABOUT_WIDTH:-44}"
 
+# Remember whether the environment named the port: an explicit value wins
+# everywhere, but the default must yield to the port the install RECORDED
+# (runtime.dsn) once there is one - see nano_adopt_recorded_settings.
+EXAKIT_DB_PORT_EXPLICIT="${EXAKIT_DB_PORT:+1}"
 EXAKIT_DB_PORT="${EXAKIT_DB_PORT:-8563}"
 
 # ---------------------------------------------------------------------------
@@ -925,7 +929,11 @@ die() {
 exakit_db_error_remedy() {
     _dber_stmt="$(printf '%s' "${2:-}" | tr '[:lower:]' '[:upper:]' | tr '\n\t' '  ')"
     case "$1" in
-        *"onnection refused"*|*"Errno 61"*|*"Errno 111"*|*"could not connect"*|*"Could not connect"*)
+        *"onnection refused"*|*"Errno 61"*|*"Errno 111"*|*"could not connect"*|*"Could not connect"*|*"Failed to connect to"*|*"failed to connect to"*|*"actively refused"*|*"os error 10061"*)
+            # The last four are how exapump and Windows spell a refused socket
+            # ("Failed to connect to 127.0.0.1:8563", "No connection could be
+            # made because the target machine actively refused it (os error
+            # 10061)"); without them the first remedy every agent needs was null.
             printf '%s\n' "That is the database not answering — it is stopped or unreachable. Start it with: exakit start (then check: exakit status)"
             ;;
         *"tls handshake"*|*"TLS handshake"*|*"TLS error"*)

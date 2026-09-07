@@ -90,7 +90,13 @@ function Invoke-Exapump {
         # that was in fact fine. Switch to 'Continue' for the native call so the
         # whole output is captured, exactly as Invoke-ExapumpAdminSql already does.
         $ErrorActionPreference = "Continue"
-        $out = & (Get-ExapumpCli) @Arguments 2>&1 | Out-String
+        # Each stderr line as its TEXT, not as a formatted ErrorRecord: Out-String
+        # rendered exapump's progress line as a seven-line red NativeCommandError
+        # block ("At ...exapump.ps1 char:16", CategoryInfo, ...) that reached the
+        # screen on every `exakit sql`, success or failure, and every log.
+        $out = (@(& (Get-ExapumpCli) @Arguments 2>&1) | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { "$($_.Exception.Message)" } else { "$_" }
+        }) -join "`n"
         $code = $LASTEXITCODE
     } catch {
         $out = "$_"
@@ -2256,6 +2262,7 @@ function Invoke-ExakitDatasetDirLoad {
     Set-ExakitManifestValue "data.datasets.$Id.tables" $tableCount
     if ($rowsKnown) { Set-ExakitManifestValue "data.datasets.$Id.rows" $rowTotal }
     Set-ExakitManifestValue "data.last_load.source" "dataset:$Id"
+    if (Get-Command Clear-ExakitSoftFailure -ErrorAction SilentlyContinue) { Clear-ExakitSoftFailure -Component "sample_data" }
     # This dataset's tables exist now, so any listing taken before it is stale.
     Clear-ExakitTableListing
     $elapsed = [int]((Get-Date) - $started).TotalSeconds
@@ -2491,6 +2498,12 @@ function Invoke-ExakitSampleDataLoad {
 # pwsh process instead (see setup-windows-docker.ps1).
 function Request-ExakitDataLoadOffer {
     param([Parameter(Mandatory)][string]$KitRoot)
+    # One dataset's failure must not cost the others: a thrown load used to leave
+    # the rest of the list unattempted, and the closing summary then said "sample
+    # data is not installed" about a TPCH that was fully in. Failures are
+    # collected and reported once, with the exact retry.
+    $failedIds = @()
+    $failedReason = ""
 
     # EXAKIT_DATASETS names bundled datasets directly (csv of ids from
     # data\datasets\<id>\, e.g. "tpch,weather") so an agent-driven or scripted
@@ -2507,12 +2520,23 @@ function Request-ExakitDataLoadOffer {
             if ($knownIds -contains $envId) {
                 $validAny = $true
                 Info "Loading dataset '$envId' (EXAKIT_DATASETS)."
-                Invoke-ExakitDatasetLoad -KitRoot $KitRoot -Id $envId
+                try {
+                    Invoke-ExakitDatasetLoad -KitRoot $KitRoot -Id $envId
+                } catch {
+                    $reason = Get-ExakitFailureReason
+                    if (-not $reason) { $reason = "$_" }
+                    Warn2 "Dataset '$envId' did not load: $reason"
+                    $failedIds += $envId
+                    $failedReason = $reason
+                }
             } else {
                 Warn2 "Unknown dataset id '$envId' in EXAKIT_DATASETS (available: $($knownIds -join ', '))."
             }
         }
         if (-not $validAny) { Fail "EXAKIT_DATASETS='$($env:EXAKIT_DATASETS)' matched no bundled dataset - nothing was loaded." }
+        if ($failedIds.Count -gt 0) {
+            Fail "Dataset(s) $($failedIds -join ', ') did not load ($failedReason). Retry with: `$env:EXAKIT_DATASETS = '$($failedIds -join ',')'; exakit data-load"
+        }
         return
     }
 
@@ -2547,10 +2571,21 @@ function Request-ExakitDataLoadOffer {
                 $result = Import-ExakitLocalFile
                 if ($result -eq "back") { Info "Local file load skipped. Run it any time with: exakit data-load" }
             } else {
-                Invoke-ExakitDatasetLoad -KitRoot $KitRoot -Id $id
+                try {
+                    Invoke-ExakitDatasetLoad -KitRoot $KitRoot -Id $id
+                } catch {
+                    $reason = Get-ExakitFailureReason
+                    if (-not $reason) { $reason = "$_" }
+                    Warn2 "Dataset '$id' did not load: $reason"
+                    $failedIds += $id
+                    $failedReason = $reason
+                }
             }
         }
     } finally {
         Stop-ExakitDataTableRun
+    }
+    if ($failedIds.Count -gt 0) {
+        Fail "Dataset(s) $($failedIds -join ', ') did not load ($failedReason). Retry with: `$env:EXAKIT_DATASETS = '$($failedIds -join ',')'; exakit data-load"
     }
 }

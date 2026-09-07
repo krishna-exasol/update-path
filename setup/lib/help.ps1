@@ -501,5 +501,7 @@ function Show-ExakitHelpJson {
         $payload = [ordered]@{ schema_version = 1; search = $Which; count = $hit.Count; commands = $hit }
     }
     $payload | ConvertTo-Json -Depth 12
-    return 0
+    # Nothing else on stdout: a `return 0` here put a bare "0" line after the
+    # object, and `exakit catalog --json` / `help <x> --json` failed every parser.
+    return
 }

@@ -29,6 +29,8 @@ foreach ($addonEntry in (Get-ExakitMarketplaceAddons)) {
 
 Initialize-ExakitLogging
 Initialize-ExakitManifest
+# The installer is the one process whose Fail() reason belongs in .last-failure.
+$script:ExakitRecordFailureNotes = $true
 Resolve-ExakitInstallVersions
 
 if ($env:EXAKIT_BANNER_SHOWN -ne "1") { Write-ExakitBanner "Personal Local Starter Kit" }
@@ -59,6 +61,9 @@ if (Test-Path $earlyPs1) {
 }
 
 try {
+    # One setup run at a time; the lock's pid is how `exakit status` tells a live
+    # install from one that crashed. Twin of exakit_enable_failure_handling.
+    Enter-ExakitInstallLock
     # --- step 1: requirements ------------------------------------------------
     Test-NanoRequirements
 
@@ -341,6 +346,12 @@ try {
     # The install is complete: the step marker `exakit status` reads back as
     # "installing" goes with it. Twin of the same clear in exakit_finish.
     try { Remove-ExakitManifestValue "install.current_step" } catch { }
+    # A run that finished with every step complete has nothing pending: a note
+    # left from an earlier failed run would otherwise outlive its cause.
+    if ($script:ExakitSoftFailed.Count -eq 0) {
+        try { Remove-Item -Path $script:FailureNotePath -Force -ErrorAction SilentlyContinue } catch { }
+    }
+    Exit-ExakitInstallLock
     Write-ExakitRule
     Write-ExakitHeading "Run ""exakit help"" for support"
     # Two blank lines before the console prompt returns. The installer's last
@@ -352,6 +363,7 @@ try {
     # A hard stop (no container runtime, no database) still owes the user the
     # account of what had already been skipped before it.
     Write-ExakitSoftFailures
+    Exit-ExakitInstallLock
     exit 1
 } catch {
     # Same "card" shape as Fail(): prominent x header + dim gutter line to the log.
@@ -359,5 +371,8 @@ try {
     Write-Host ("  {0}{1} {2}Unexpected error: $_{3}" -f $script:UiErr, $script:UiCross, $script:UiBold, $script:UiReset)
     if ($script:LogFile) { Write-Host ("    {0}{1} Log: {2}{3}" -f $script:UiDim, $script:UiVB, $script:LogFile, $script:UiReset) }
     Write-ExakitSoftFailures
+    Exit-ExakitInstallLock
     exit 1
+} finally {
+    Exit-ExakitInstallLock
 }
