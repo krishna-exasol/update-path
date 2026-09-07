@@ -277,8 +277,16 @@ personal_cli() {
     fi
 }
 
+# Launcher probes are BOUNDED. exakit_run_bounded was written because macOS has
+# no timeout(1) - and then guarded only the container-engine probes, which run
+# on the platforms that have it. Every macOS launcher probe stayed unbounded,
+# so `exakit status` - the command AGENTS.md tells agents to poll - could hang
+# forever on exactly the wedged launcher the module ships a reaper for.
+EXAKIT_PERSONAL_PROBE_TIMEOUT="${EXAKIT_PERSONAL_PROBE_TIMEOUT:-10}"
+
 personal_deployment_exists() {
-    [ -d "$EXAKIT_PERSONAL_DEPLOY_DIR" ] && "$(personal_cli)" info >/dev/null 2>&1
+    [ -d "$EXAKIT_PERSONAL_DEPLOY_DIR" ] && \
+        exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$(personal_cli)" info >/dev/null 2>&1
 }
 
 # personal_deployment_running — is a local Exasol deployment actually up and
@@ -299,7 +307,7 @@ personal_db_answers() {
         exakit_db_reachable
         return $?
     fi
-    "$(personal_cli)" info >/dev/null 2>&1
+    exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$(personal_cli)" info >/dev/null 2>&1
 }
 
 # personal_port_holder_hint — " (pid N, name)" for the process on the port, or
@@ -466,7 +474,54 @@ _personal_deploy_collect() {
     _pdc_pct=0
     _pdc_phase=""
     _pdc_shown=""
-    while IFS= read -r _pdc_line || [ -n "$_pdc_line" ]; do
+    _pdc_quiet=0
+    _pdc_stalled=0
+    while :; do
+        _pdc_line=""
+        # A bounded read, not a blocking one. The launcher re-attaches stdin to
+        # the terminal so a first-run licence confirmation can read the
+        # keyboard - but the PROMPT arrives here without a newline, so it never
+        # leaves this pipe: the question sat invisible in the buffer while the
+        # bar showed 5% forever, with nothing anywhere saying why. The install
+        # cannot answer a licence question for the user (and must not), so the
+        # bounded read exists to NOTICE the silence and put the situation on
+        # screen, where the still-connected keyboard can resolve it.
+        #
+        # bash 3.2 returns the SAME code for a timeout and for EOF, so the two
+        # are told apart by the clock: only a wait that consumed the whole
+        # window was a timeout. (A final line without a trailing newline also
+        # returns non-zero, with the line in the variable - kept, then EOF on
+        # the next pass.)
+        _pdc_win="${EXAKIT_PERSONAL_DEPLOY_STALL:-300}"
+        [ "$_pdc_win" -gt 30 ] && _pdc_win=30
+        # Floor of 2: the EOF discriminator below needs at least one full second
+        # of difference between "returned instantly" and "waited the window".
+        [ "$_pdc_win" -lt 2 ] && _pdc_win=2
+        _pdc_t0=$SECONDS
+        if IFS= read -r -t "$_pdc_win" _pdc_line; then
+            _pdc_quiet=0
+        elif [ -z "$_pdc_line" ] && [ $((SECONDS - _pdc_t0)) -lt $((_pdc_win - 1)) ]; then
+            break   # EOF
+        elif [ -z "$_pdc_line" ]; then
+            _pdc_quiet=$((_pdc_quiet + (SECONDS - _pdc_t0)))
+            if [ "$_pdc_quiet" -ge "${EXAKIT_PERSONAL_DEPLOY_STALL:-300}" ] && [ "$_pdc_stalled" -eq 0 ]; then
+                _pdc_stalled=1
+                # Stop the animation and switch to plain lines: a bar that
+                # keeps creeping is the opposite of what a stalled launcher
+                # should look like. warn is never gated by EXAKIT_QUIET_DETAIL.
+                ui_progress_end
+                EXAKIT_DEPLOY_LIVE=0
+                if [ "$_pdc_quiet" -ge 120 ]; then
+                    warn "The launcher has said nothing for $((_pdc_quiet / 60)) minutes."
+                else
+                    warn "The launcher has said nothing for $_pdc_quiet seconds."
+                fi
+                warn "It may be waiting for a first-run confirmation it could not display. Your keyboard is still connected to it - typing an answer here reaches it."
+                _personal_deploy_print_tail "$2"
+                warn "Still waiting. Full output: ${EXAKIT_LOG_FILE:-the install log}. Ctrl-C is safe - re-running the installer resumes, or run '$(personal_cli) install local' yourself to see the prompt."
+            fi
+            continue
+        fi
         [ -n "${EXAKIT_LOG_FILE:-}" ] && printf '%s\n' "$_pdc_line" >> "$EXAKIT_LOG_FILE"
         printf '%s\n' "$_pdc_line" >> "$2"
         case "$_pdc_line" in
@@ -485,9 +540,15 @@ _personal_deploy_collect() {
         _pdc_phase="${_pdc_rest#*|}"
         ui_progress_state "$1" "$_pdc_pct" "$_pdc_ceil" "$_pdc_secs" "$_pdc_phase"
         # Nothing is animating (piped, CI, NO_COLOR, a dumb terminal): one plain
-        # logged line per phase, rather than a line that redraws nothing.
+        # logged line per phase, rather than a line that redraws nothing. After
+        # a stall the quiet-detail gate is bypassed - the launcher just came
+        # back to life and the reader deserves to see it move again.
         if [ "${EXAKIT_DEPLOY_LIVE:-0}" != 1 ] && [ "$_pdc_phase" != "$_pdc_shown" ]; then
-            info "$_pdc_phase"
+            if [ "$_pdc_stalled" -eq 1 ]; then
+                info_step "$_pdc_phase"
+            else
+                info "$_pdc_phase"
+            fi
             _pdc_shown="$_pdc_phase"
         fi
     done
@@ -667,7 +728,8 @@ personal_wait_ready() {
     ui_spin_begin "Waiting for the database to answer"
     _tries=0
     while [ "$_tries" -lt 30 ]; do
-        if port_in_use "$EXAKIT_PERSONAL_PORT" && "$(personal_cli)" info >/dev/null 2>&1; then
+        if port_in_use "$EXAKIT_PERSONAL_PORT" && \
+           exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$(personal_cli)" info >/dev/null 2>&1; then
             ui_spin_end
             ok "Deployment is reachable"
             return 0
@@ -676,7 +738,9 @@ personal_wait_ready() {
         _tries=$((_tries + 1))
     done
     ui_spin_end
-    die "Deployment does not respond to 'exasol info'. Check: $(personal_cli) info"
+    # Not "run the probe that just failed": name the two commands that actually
+    # diagnose and recover a deploy that answers nothing.
+    die "The deployment did not answer within $((_tries * 5)) seconds. Read the state with 'exakit status', then 'exakit start' to retry - a deployment stuck in 'interrupted' is repaired with 'exakit repair-runtime' (destructive, it asks first)."
 }
 
 personal_record_manifest() {
