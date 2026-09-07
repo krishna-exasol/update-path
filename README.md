@@ -114,15 +114,7 @@ Health check any time: `exakit mcp-doctor`.
 
 ## Let an AI assistant drive the kit (the skills)
 
-The kit ships **AI skills**: small `SKILL.md` recipes that teach an agent (Claude Code, Codex, Cursor, or any tool that reads the open skill standard) how to operate it. One skill per thing the agent has to drive, so only the relevant one loads: setup and the first query, the database, exapump, MCP, pyexasol, and one per add-on.
-
-The installer places them where agents look (`~/.claude/skills/`, `~/.agents/skills/`). Nothing to run. In a **fresh** agent session, say **"setup starter kit"** and it takes over; or ask for anything the kit does ("load this JSON file", "build me a dashboard", "query Exasol from Python") and the matching skill fires on its own.
-
-```bash
-exakit skills             # the set, whether each is placed, and the next command if one is needed
-```
-
-The skill set is versioned. When the maintainers publish a newer one, `exakit version` and `exakit info` say so and `exakit update` fetches it in seconds, no kit release needed. Full index: [skills/README.md](skills/README.md). If the agent asks for approval too often: [skills/reducing-agent-prompts.md](skills/reducing-agent-prompts.md).
+The installer gives your AI agent seven skills, one per thing it may need to drive: setup, the database, exapump, MCP, Python, the Exasol tool ecosystem and the marketplace, plus one per installed add-on. They work in Claude Code, Codex, Cursor and any tool that reads the open skill standard, and load only when relevant. `exakit skills` lists them, `exakit update` refreshes them. Index: [skills/README.md](skills/README.md).
 
 ## The workflow this kit teaches
 
