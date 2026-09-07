@@ -218,6 +218,47 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
+echo "a skill dropped from the set is retired, not orphaned:"
+# ---------------------------------------------------------------------------
+# THE ORPHAN THIS PINS: skills-install copied the new set but never removed a
+# previously placed skill the new set dropped, so it stayed in the discovery
+# roots forever, firing its triggers for a workflow the kit no longer ships.
+# Only names the MANIFEST recorded are removed — a skill the user placed
+# themselves is never the kit's to touch.
+mkdir -p "$WORK/fakekit/skills/zz-keeper"
+cat > "$WORK/fakekit/skills/zz-keeper/SKILL.md" <<'EOF'
+---
+name: zz-keeper
+description: Stays in the set. Triggers — "never".
+---
+Body.
+EOF
+mkdir -p "$WORK/claude/zz-user-own"
+printf 'the user put this here themselves\n' > "$WORK/claude/zz-user-own/SKILL.md"
+rm -rf "$WORK/fakekit/skills/zz-invented-skill"
+exakit_install_skills >"$WORK/retire.log" 2>&1
+check "the dropped skill left every root" "available" "$(exakit_skill_state zz-invented-skill)"
+check "the kept skill is untouched" "installed" "$(exakit_skill_state zz-keeper)"
+check "a skill the user placed themselves is never removed" "yes" \
+    "$([ -f "$WORK/claude/zz-user-own/SKILL.md" ] && echo yes || echo no)"
+has "the retirement is said out loud" "Retired 1 skill" "$(cat "$WORK/retire.log")"
+lacks "the record no longer names the dropped skill" "zz-invented-skill" \
+    "$(manifest_get components.skills.installed 2>/dev/null || true)"
+# Put the fixture back the way the sections below expect it: the invented
+# skill in the kit and placed, the keeper and the user's own skill gone.
+rm -rf "$WORK/fakekit/skills/zz-keeper" "$WORK/claude/zz-user-own"
+mkdir -p "$WORK/fakekit/skills/zz-invented-skill"
+cat > "$WORK/fakekit/skills/zz-invented-skill/SKILL.md" <<'EOF'
+---
+name: zz-invented-skill
+description: A skill that exists only in this test. Triggers — "never".
+---
+Body.
+EOF
+exakit_install_skills >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+echo
 echo "an add-on's skill ships with its add-on, not before it:"
 # ---------------------------------------------------------------------------
 # A skill for a marketplace add-on is no use until the add-on is there: its
@@ -562,6 +603,48 @@ lacks "the shell offers no command when there is nothing to do" \
     "All installed. Refresh after a kit update" "$SH_COMMON"
 lacks "...nor does the twin" \
     "All installed. Refresh after a kit update" "$PS_COMMON"
+
+# ---------------------------------------------------------------------------
+echo
+echo "triggers route to one skill, and gated skills say whose they are:"
+# ---------------------------------------------------------------------------
+# SKL-04: a verbatim trigger in two skills leaves the agent a coin flip.
+check "'connect my AI to Exasol' belongs to exactly one skill" "1" \
+    "$(grep -l 'connect my AI to Exasol' "$ROOT"/skills/*/SKILL.md | wc -l | tr -d ' ')"
+# SKL-05: the ecosystem skill routes AROUND the kit, never over it - no
+# literal template trigger, and no claim on the loading the installed tools own.
+lacks "the ecosystem skill has no template trigger" '<tool>' \
+    "$(cat "$ROOT/skills/exasol-ecosystem/SKILL.md")"
+lacks "...and does not claim local Parquet loading" 'load Parquet' \
+    "$(sed -n '4p' "$ROOT/skills/exasol-ecosystem/SKILL.md")"
+has  "...and scopes itself beyond the kit" 'BEYOND this kit' \
+    "$(cat "$ROOT/skills/exasol-ecosystem/SKILL.md")"
+# SKL-03: an add-on-gated, uninstalled skill is not "available" to
+# skills-install; the listing says whose it is and stops prescribing a command
+# that skips it. Proven against the fake kit: gate a skill on an add-on that
+# is not installed and read the listing both ways.
+# A section above repointed exakit_repo_root at its own kit copy; this block
+# builds a minimal kit of its own so the gated fixture is actually visible.
+GATEKIT="$WORK/gatekit"
+mkdir -p "$GATEKIT/skills/zz-gated"
+cp "$ROOT/versions.json" "$GATEKIT/versions.json"
+cat > "$GATEKIT/skills/zz-gated/SKILL.md" <<'EOF'
+---
+name: zz-gated
+addon: zz-never-addon
+description: Arrives with its add-on. Triggers — "never".
+---
+Body.
+EOF
+exakit_repo_root() { printf '%s
+' "$GATEKIT"; }
+_gated_json="$(exakit_skills_list --json 2>/dev/null)"
+has "the JSON says needs-addon" '"name":"zz-gated","state":"needs-addon","addon":"zz-never-addon"' "$_gated_json"
+has "...with the runnable remedy" '"remedy":"exakit marketplace zz-never-addon"' "$_gated_json"
+_gated_panel="$(exakit_skills_list 2>/dev/null)"
+has "the panel names the owning add-on" "with zz-never-addon" "$_gated_panel"
+lacks "...and does not prescribe skills-install for it" "exakit skills-install" "$_gated_panel"
+rm -rf "$GATEKIT"
 
 echo
 printf 'passed: %d, failed: %d\n' "$PASS" "$FAIL"
