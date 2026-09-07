@@ -841,6 +841,17 @@ has "the personal runtime honours it" 'confirm_env EXAKIT_REUSE_DB' \
     "$(cat "$ROOT/setup/lib/runtime-personal.sh")"
 has "the nano runtime honours it too" '[ "${EXAKIT_REUSE_DB:-1}" = "0" ] && nano_container_exists' \
     "$(cat "$ROOT/setup/lib/runtime-nano.sh")"
+# On macOS, declining reuse of a STOPPED deployment must be as harmless as
+# declining it for a running one: the deletion has its own question and its
+# own variable, so EXAKIT_REUSE_DB=0 alone can never destroy in one state
+# what it safely refuses in the other. repair-runtime is the one caller
+# allowed to pre-answer that question, because it just asked its own.
+has "personal deletion has its own consent" 'confirm_env EXAKIT_REPLACE_DB' \
+    "$(cat "$ROOT/setup/lib/runtime-personal.sh")"
+has "repair-runtime carries that consent" 'export EXAKIT_REPLACE_DB=1' "$EXAKIT_SH"
+has "the delete prompt names the consequence first" \
+    'DELETE the stopped deployment and its data' \
+    "$(cat "$ROOT/setup/lib/runtime-personal.sh")"
 has "...and its twin"                 '$env:EXAKIT_REUSE_DB -eq "0" -and (Test-NanoContainerExists)' \
     "$(cat "$ROOT/setup/lib/nano.ps1")"
 # The data volume goes with the container, or the rebuild wraps the same

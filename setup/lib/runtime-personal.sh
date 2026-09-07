@@ -548,12 +548,18 @@ personal_deploy_local() {
     # ("run `start` to restart or `destroy` to delete resources"), so
     # deploying here would dead-end. Adopt it the way a running one is
     # adopted: start it and reuse. A piped/non-interactive install defaults
-    # to yes (reuse); EXAKIT_REUSE_DB=0 rebuilds fresh instead, destroying
-    # the old deployment's data. A deployment that will not start (a crashed
-    # VM) is replaced — announced, never silently.
+    # to yes (reuse). Declining reuse is exactly as harmless as it is for a
+    # running database — nothing is deleted without its own explicit consent,
+    # so EXAKIT_REUSE_DB=0 can never destroy in this state what it safely
+    # refuses in the other. Deletion has a dedicated question and a dedicated
+    # variable (EXAKIT_REPLACE_DB=1), and its prompt names the consequence
+    # before the answer. The one exception is a deployment that will not
+    # start at all (a crashed VM): that is replaced — announced, never
+    # silently — because there is nothing left to reuse.
     if personal_deployment_exists; then
         info "An Exasol deployment was found, not running."
-        if confirm_env EXAKIT_REUSE_DB "Start it and use it instead of deploying a new one?" y; then
+        _pdl_replace=0
+        if confirm_env EXAKIT_REUSE_DB "Start the existing database and keep its data?" y; then
             if personal_launcher_supports start && run_logged "$(personal_cli)" start; then
                 ok "Reusing the existing Exasol deployment (started)"
                 personal_wait_ready
@@ -561,11 +567,18 @@ personal_deploy_local() {
                 return 0
             fi
             warn "The existing deployment could not be started."
+            _pdl_replace=1
+        fi
+        if [ "$_pdl_replace" != "1" ]; then
+            if ! confirm_env EXAKIT_REPLACE_DB "DELETE the stopped deployment and its data, and deploy a fresh one? This cannot be undone." n; then
+                die "Declined to reuse the stopped deployment. Start it yourself with 'exakit start', or re-run with EXAKIT_REPLACE_DB=1 to replace it — deleting its data."
+            fi
         fi
         info "Replacing the existing deployment — its previous data is not recoverable."
         # --auto-approve: destroy has its own [y/N] prompt, which a piped or
-        # scripted install cannot answer; the consent came from the reuse
-        # question (or EXAKIT_REUSE_DB=0) just above.
+        # scripted install cannot answer; the consent came from the explicit
+        # replace question (or EXAKIT_REPLACE_DB=1) just above, or from the
+        # deployment being unstartable.
         run_logged "$(personal_cli)" destroy --remove --auto-approve || \
             warn "Could not fully remove the old deployment; the launcher will deploy over it."
     fi
