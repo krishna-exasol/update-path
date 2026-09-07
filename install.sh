@@ -36,7 +36,9 @@
 #
 #   Non-interactive answers (for agent-driven or scripted installs, so the
 #   install honours a choice instead of silently taking the default):
-#   EXAKIT_REUSE_DB=0|1     reuse a running database (macOS): 0 deploy fresh, 1 reuse
+#   EXAKIT_REUSE_DB=0|1     adopt an existing database: 1 reuse (default), 0 decline.
+#                           On macOS declining never deletes; replacing a stopped
+#                           deployment (and losing its data) needs EXAKIT_REPLACE_DB=1.
 #   EXAKIT_MCP_CLIENTS=...  which MCP clients to configure, BY NAME (names are
 #                           stable across releases; menu numbers are not):
 #                           claude (= both the desktop app and the Claude Code

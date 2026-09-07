@@ -712,8 +712,12 @@ cmd_repair_runtime() {
     # the first one it had just been given.
     #
     # EXAKIT_REUSE_DB=0 is the documented way to force a fresh deployment, and
-    # it is what this command has meant all along.
+    # it is what this command has meant all along. On macOS, declining reuse is
+    # deliberately harmless and the deletion has its own consent variable —
+    # EXAKIT_REPLACE_DB=1 — which this command may set because the user just
+    # answered its own destructive prompt.
     export EXAKIT_REUSE_DB=0
+    export EXAKIT_REPLACE_DB=1
     exec bash "$_rr_kit/$_rr_setup"
 }
 

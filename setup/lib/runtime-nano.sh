@@ -546,8 +546,9 @@ nano_install() {
             # volume was not, which a partial uninstall leaves behind.)
             if [ "$_nano_volume_existed" -eq 1 ]; then
                 warn "The data volume $EXAKIT_NANO_VOLUME is being adopted, but this machine has no stored password for it."
-                info "Its SYS password lives inside the volume, from the install that created it."
-                info "If you no longer have it, replace the volume and lose its data with: EXAKIT_REUSE_DB=0"
+                info "Its SYS password lives with the install that created the volume - often this machine's other side (Windows or WSL), in ~/.exasol-starter-kit/credentials/nano_sys_password."
+                info "Safest: copy that file into $EXAKIT_CREDS_DIR and re-run - the database and its data stay intact."
+                info "Last resort, if the password is truly gone: re-run with EXAKIT_REUSE_DB=0 - that DELETES the volume and every table in it."
             fi
             _password="$(generate_password)"
             store_credential nano_sys_password "$_password"
@@ -735,7 +736,9 @@ nano_wait_ready_soft() {
             "$(nano_engine)" "$EXAKIT_NANO_CONTAINER" "$(nano_engine)" "$EXAKIT_NANO_VOLUME" >&2
     else
         printf '    Do NOT remove the volume %s - it IS your database.\n' "$EXAKIT_NANO_VOLUME" >&2
-        printf '    If the container is genuinely wedged:  exakit repair-runtime\n' >&2
+        printf '    Often it is just slow: wait a minute, then check exakit status.\n' >&2
+        printf '    If the container is genuinely wedged: exakit repair-runtime\n' >&2
+        printf '    (asks first; REPLACES the database, deleting its data).\n' >&2
     fi
     return 1
 }

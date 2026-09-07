@@ -1042,7 +1042,9 @@ function Wait-NanoReady {
         Write-Host "      $engine rm -f $($script:NanoContainer) && $engine volume rm $($script:NanoVolume)"
     } else {
         Write-Host "    Do NOT remove the volume $($script:NanoVolume) - it IS your database."
-        Write-Host "    If the container is genuinely wedged:  exakit repair-runtime"
+        Write-Host "    Often it is just slow: wait a minute, then check exakit status."
+        Write-Host "    If the container is genuinely wedged: exakit repair-runtime"
+        Write-Host "    (asks first; REPLACES the database, deleting its data)."
     }
     Fail "The database did not become ready in time."
 }
