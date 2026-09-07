@@ -106,7 +106,7 @@ exakit mcp-setup
 
 A checkbox multi-select (↑/↓ to move, **Space** to toggle, **Enter** to confirm) over **Claude**, **Codex**, **Cursor**, **GitHub Copilot**, **Gemini CLI**, **OpenCode**, **Continue**, and **Skip for now**. The list is **dynamic**: clients already connected, or not installed on this machine, aren't offered. If everything found is already connected, the command says so and exits.
 
-The command validates the MCP connection, prints where the config lives, and gives you a first prompt to try, copied to your clipboard when a clipboard tool is available. When it can detect the local MCP launcher path, it writes that exact path into client configs instead of assuming `uvx` is on every app's PATH, for more reliable setup across macOS, Linux, and Windows.
+The command checks the MCP connection, prints where each config lives, and gives you a first prompt to try. It writes the exact path of the local MCP launcher into the client configs, so setup does not depend on what is on each app's PATH.
 
 The installer runs this step for you automatically. `exakit mcp-setup` re-runs it any time.
 
