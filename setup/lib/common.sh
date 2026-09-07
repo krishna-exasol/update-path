@@ -10210,14 +10210,24 @@ _exakit_autostart_register() {
     _ar_id="$1"
     _ar_cmd="$(_exakit_service_autostart_command "$_ar_id")"
     if [ -z "$_ar_cmd" ]; then
-        # Nano: the container itself carries the policy.
+        # Nano: the container itself carries the policy — under DOCKER, whose
+        # daemon is up at boot to honour it. Rootless Podman has no daemon:
+        # its restart policy is a recorded no-op, and reporting it as
+        # autostart was a lie the machine only exposed after the next reboot.
+        # There, the start goes through a systemd user unit like any other
+        # service: fall through to the linux arm below with the start command.
         if [ "$_ar_id" = "database" ] && \
            [ "$(exakit_installation_runtime_type 2>/dev/null || true)" = "nano" ]; then
-            _exakit_nano_restart_policy always && \
-                ok "database: the container restarts with Docker"
-            return $?
+            if _exakit_nano_rootless_podman; then
+                _ar_cmd="podman start ${EXAKIT_NANO_CONTAINER:-exasol-nano}"
+            else
+                _exakit_nano_restart_policy always && \
+                    ok "database: the container restarts with Docker"
+                return $?
+            fi
+        else
+            return 0
         fi
-        return 0
     fi
     _ar_label="$(_exakit_autostart_label "$_ar_id")"
     case "$(detect_os)" in
@@ -10269,14 +10279,36 @@ _exakit_autostart_register() {
             fi
             mkdir -p "$EXAKIT_SYSTEMD_USER_DIR" || { warn "Could not create $EXAKIT_SYSTEMD_USER_DIR"; return 1; }
             _ar_unit="$EXAKIT_SYSTEMD_USER_DIR/$_ar_label.service"
+            # A `podman start` trigger exits the moment the container is up:
+            # under Type=simple that reads as the service dying, and
+            # Restart=on-failure would loop it at boot. oneshot+RemainAfterExit
+            # is the honest shape for a starter that hands off.
+            case "$_ar_cmd" in
+                "podman start"*) _ar_svc='Type=oneshot\nRemainAfterExit=yes' ;;
+                *)               _ar_svc='Type=simple\nRestart=on-failure' ;;
+            esac
             {
                 printf '[Unit]\nDescription=Exasol Starter Kit: %s\n\n' "$_ar_id"
-                printf '[Service]\nType=simple\nExecStart=%s\nRestart=on-failure\n\n' "$_ar_cmd"
+                printf "[Service]\n${_ar_svc}\nExecStart=%s\n\n" "$_ar_cmd"
                 printf '[Install]\nWantedBy=default.target\n'
             } > "$_ar_unit" || { warn "Could not write $_ar_unit"; return 1; }
             systemctl --user daemon-reload >/dev/null 2>&1
             systemctl --user enable "$_ar_label.service" >/dev/null 2>&1 || {
                 warn "Could not enable $_ar_label.service"; return 1; }
+            # WITHOUT LINGER, a user unit dies at logout and never runs at boot
+            # on a headless box - "starts at login" was silently "starts only
+            # while you are logged in". Best-effort self-linger; when it is
+            # refused (some distros gate it behind polkit), say what the
+            # machine's admin has to run rather than pretending.
+            if command -v loginctl >/dev/null 2>&1 && \
+               [ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null)" != "yes" ]; then
+                if loginctl enable-linger >/dev/null 2>&1; then
+                    _exakit_log_file "OK    lingering enabled: $_ar_id survives logout and runs at boot"
+                else
+                    warn "$_ar_id starts at login, but only while you stay logged in: enabling lingering was refused."
+                    info "On a headless or shared box, have an admin run: loginctl enable-linger $USER"
+                fi
+            fi
             _exakit_log_file "OK    $_ar_id: starts at login ($_ar_unit)"
             ;;
         *)
@@ -10305,14 +10337,28 @@ _exakit_autostart_unregister() {
     return 0
 }
 
+# _exakit_nano_rootless_podman — rootless Podman has no daemon at boot, so a
+# container restart policy is a recorded no-op there: only a systemd user
+# unit actually brings the database back after a reboot.
+_exakit_nano_rootless_podman() {
+    command -v detect_container_runtime >/dev/null 2>&1 || return 1
+    [ "$(detect_container_runtime 2>/dev/null)" = "podman" ] || return 1
+    [ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = "true" ]
+}
+
 # _exakit_autostart_registered <id> — is a boot entry in place?
 _exakit_autostart_registered() {
     _arg_label="$(_exakit_autostart_label "$1")"
     [ -f "$EXAKIT_LAUNCHAGENT_DIR/$_arg_label.plist" ] && return 0
     [ -f "$EXAKIT_SYSTEMD_USER_DIR/$_arg_label.service" ] && return 0
-    # Nano needs no file: the container carries the policy itself.
+    # Nano needs no file when the ENGINE honours the policy: only Docker's
+    # daemon is up at boot to do so. For rootless Podman the policy proves
+    # nothing — the unit file checked above is the only real registration —
+    # so status stops reporting "autostart: true" for a database nothing
+    # will restart.
     if [ "$1" = "database" ] && \
-       [ "$(exakit_installation_runtime_type 2>/dev/null || true)" = "nano" ]; then
+       [ "$(exakit_installation_runtime_type 2>/dev/null || true)" = "nano" ] && \
+       ! _exakit_nano_rootless_podman; then
         _exakit_nano_restart_policy_is_set && return 0
     fi
     return 1

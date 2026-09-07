@@ -554,5 +554,33 @@ check "...and every Windows run site too" "5" \
 has "adoption reaches the screen" 'ok_step "Adopt' "$NANO_SH_6"
 has "...on Windows as well"       'OkStep "Adopt' "$NANO_PS_6"
 
+# --- Linux is a served platform ----------------------------------------------
+echo
+echo "selinux is detected, autostart is honest, linux has a quickstart:"
+NANO_SH_7="$(cat "$ROOT/setup/lib/runtime-nano.sh")"
+COMMON_SH_7="$(cat "$ROOT/setup/lib/common.sh")"
+# LNX-02: the :z bind-mount label is about SELINUX ENFORCEMENT, not about
+# which engine happens to run - Docker on Fedora needed it and never got it,
+# Podman on Ubuntu got it and never needed it.
+has "the secret mount label keys on enforcement" '_exakit_selinux_enforcing && _secret_mount' "$NANO_SH_7"
+lacks "...never on the engine name" '"$_engine" = "podman" ] && _secret_mount' "$NANO_SH_7"
+has "detection asks getenforce first" 'getenforce' "$NANO_SH_7"
+has "...and the kernel where getenforce is absent" '/sys/fs/selinux/enforce' "$NANO_SH_7"
+# LNX-01: rootless Podman has no daemon at boot to honour a restart policy.
+# Registration goes through a systemd user unit there, and the registered
+# check stops counting the policy as autostart - so status stops reporting
+# "autostart: true" for a database nothing will restart.
+has "rootless podman is its own autostart case" '_exakit_nano_rootless_podman' "$COMMON_SH_7"
+has "...registered via a start unit" '_ar_cmd="podman start' "$COMMON_SH_7"
+has "...as a oneshot, not a crash-looping simple service" 'Type=oneshot' "$COMMON_SH_7"
+has "the policy only counts as autostart under docker" '! _exakit_nano_rootless_podman' "$COMMON_SH_7"
+# LNX-12: a user unit dies at logout without lingering; the kit enables it or
+# says what an admin has to run.
+has "lingering is attempted" 'loginctl enable-linger' "$COMMON_SH_7"
+has "...and refusal names the admin command" 'loginctl enable-linger $USER' "$COMMON_SH_7"
+# LNX-03: Linux users stop being routed to a WSL document.
+check "a Linux quickstart exists" "yes" "$([ -f "$ROOT/quickstarts/linux.md" ] && echo yes || echo no)"
+has "and the README points at it" "quickstarts/linux.md" "$(cat "$ROOT/README.md")"
+
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
