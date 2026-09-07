@@ -210,9 +210,8 @@ exakit marketplace
 
 Space selects, Enter installs. Installed add-ons update through `exakit update`
 like everything else, and a tool you already have — even one installed outside
-the kit — is never offered twice. Flowcharts of every scenario:
-[MARKETPLACE-FLOWS.md](MARKETPLACE-FLOWS.md). Building your own add-on:
-[MARKETPLACE.md](MARKETPLACE.md).
+the kit — is never offered twice. Flowcharts of every scenario, and how to
+build your own add-on: [MARKETPLACE.md](MARKETPLACE.md).
 
 ## Staying up to date
 
