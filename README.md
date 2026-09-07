@@ -92,7 +92,7 @@ Step-by-step guides: [QUICKSTART](QUICKSTART.md) · [macOS](quickstarts/macos.md
 
 ### Installing: what to expect
 
-The installer detects your OS and hardware, shows its plan, then installs everything: the database, exapump, the MCP server, pyexasol, and your AI client connections. The flow is the same on macOS, Linux, WSL, and Windows PowerShell. The database is usually up in **under 2 minutes**; the steps after it — sample data, the AI bridge, the Python driver — take longer, and a full Windows install is the slowest of them. A long-running install is not a stuck one.
+One command does the whole install. It checks your machine, shows what it will do, and then installs the database, exapump, the MCP server, pyexasol and your AI client connections. The database is ready in about two minutes. The rest takes a few minutes more, especially on Windows. Let it finish. It is the same on macOS, Linux, WSL and Windows PowerShell.
 
 At the end you get a connection panel with everything you need, and a first prompt for your AI client is on your clipboard.
 
