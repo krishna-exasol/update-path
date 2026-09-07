@@ -221,14 +221,13 @@ curl -s -X POST http://127.0.0.1:5100/mcp \
 
 ## After the install
 
-Install the agent skills so future sessions can drive the full ask, inspect SQL, run, validate loop:
+The installer already placed the agent skills where CLI agents look (`~/.claude/skills`, `~/.agents/skills`), so future sessions can drive the full ask, inspect SQL, run, validate loop. Nothing to run:
 
 ```bash
-exakit skills-install     # place them where CLI agents look
-exakit skills             # what this kit carries, and what is installed (--json too)
+exakit skills             # what this kit carries, whether each is placed, and the next command if one is needed (--json too)
 ```
 
-The skill set is a versioned component: `exakit version` shows a `skills` row, and `exakit update` fetches a newer set the maintainers advertise and installs it, without a kit release. A stale set is therefore fixed by `exakit update`, not by `skills-install`, which only re-places the local copy.
+The skill set is a versioned component: `exakit version` and `exakit info` show its installed and advertised versions, and `exakit update` fetches a newer set the maintainers advertise and places it, without a kit release. If a placed skill has gone missing, `exakit skills` says so and names the repair.
 
 There is one skill per thing you have to operate, so only the relevant one loads: `local-agent-ready-starter` (setup and the first query), `exasol-runtime`, `exasol-exapump`, `exasol-mcp`, `exasol-pyexasol`, and one per marketplace add-on (`exasol-marketplace`, `dash-server`, `json-tables`, `exasol-vscode`). Full index: [skills/README.md](skills/README.md).
 
@@ -276,7 +275,7 @@ Then see `skills/local-agent-ready-starter/SKILL.md` for the full query-loop dis
 
 ### Fewer approval prompts
 
-`skills/reducing-agent-prompts.md` is the per-agent guide: which read-only commands are safe to allow without a prompt, and why `exakit sql`, `exapump` and every mutating command deliberately keep asking. `exakit skills-install` applies that allowlist to Claude Code's settings itself (and `exakit uninstall` removes exactly those entries again); other agents follow the doc.
+`skills/reducing-agent-prompts.md` is the per-agent guide: which read-only commands are safe to allow without a prompt, and why `exakit sql`, `exapump` and every mutating command deliberately keep asking. The installer applies that allowlist to Claude Code's settings itself (and `exakit uninstall` removes exactly those entries again); other agents follow the doc.
 
 ## Uninstall
 

@@ -54,15 +54,14 @@ You already use AI. The hard part is trusting it with your data. This kit gives 
 | ⚡ | **[exapump](https://github.com/exasol-labs/exapump)** | Load CSV/Parquet files and run SQL from your terminal |
 | 🐍 | **[pyexasol](https://github.com/exasol/pyexasol)** | The official Exasol Python driver, ready in its own environment |
 
-At the end: connection details on screen, a managed runtime state under `~/.exasol-starter-kit/`, and guided MCP setup for supported clients. The database itself is usually up in **under 2 minutes**.
-
-**Three optional add-ons — add them any time with `exakit marketplace`:**
+**Four add-ons — add them any time with `exakit marketplace`:**
 
 | | Add-on | What it does for you |
 |---|---|---|
 | 📊 | **[dash-server](https://github.com/exasol-labs/dash-server)** | Your AI builds live, query-backed dashboards on the local database; you open them in the browser |
 | 🧩 | **[Exasol&nbsp;for&nbsp;VS&nbsp;Code](https://github.com/exasol-labs/exasol-vscode)** | SQL editing and schema browsing against the local database, inside your editor |
 | 🧬 | **[JSON&nbsp;Tables](https://github.com/exasol-labs/exasol-json-tables)** | Load JSON files into Exasol as regular tables, nested documents included |
+| ⏱️ | **[Exasol&nbsp;Scheduler](https://github.com/exasol-labs/exasol-scheduler)** | Lightweight, table-driven SQL job scheduling: run SQL on a timetable inside the local database |
 
 
 
@@ -133,11 +132,10 @@ Health check any time: `exakit mcp-doctor`.
 The kit ships **AI skills** — `SKILL.md` recipes that teach an agent (Claude Code, Codex, Cursor, or any tool that reads the open skill standard) how to operate it. There is one per thing the agent has to drive, so only the relevant one loads: the starter flow, then the database runtime, exapump, MCP, pyexasol, and each marketplace add-on.
 
 ```bash
-exakit skills-install     # place them where agents look
 exakit skills             # what this kit carries, and what is installed
 ```
 
-This copies the skills into each agent's discovery folder (`~/.claude/skills/`, `~/.agents/skills/`). The set is versioned like every other component: when the maintainers publish a newer one, `exakit update` fetches and installs it in seconds. In a **fresh** agent session, say **"setup starter kit"** and it takes over — or ask for anything else the kit does ("load this JSON file", "build me a dashboard", "query Exasol from Python") and the matching skill fires on its own. See [`skills/README.md`](skills/README.md) for the full index, and [`skills/reducing-agent-prompts.md`](skills/reducing-agent-prompts.md) if the agent asks for approval too often.
+The installer places the skills into each agent's discovery folder (`~/.claude/skills/`, `~/.agents/skills/`). The set is versioned like every other component: when the maintainers publish a newer one, `exakit update` fetches and installs it in seconds. In a **fresh** agent session, say **"setup starter kit"** and it takes over — or ask for anything else the kit does ("load this JSON file", "build me a dashboard", "query Exasol from Python") and the matching skill fires on its own. See [`skills/README.md`](skills/README.md) for the full index, and [`skills/reducing-agent-prompts.md`](skills/reducing-agent-prompts.md) if the agent asks for approval too often.
 
 ## The workflow this kit teaches
 

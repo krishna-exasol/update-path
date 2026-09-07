@@ -1,8 +1,8 @@
 # Skills — AI assistant guidance for the starter kit
 
 > **TL;DR** — These are AI *skills*: small `SKILL.md` recipes that teach an AI
-> assistant how to drive this kit. `exakit skills-install` copies them into
-> `~/.claude/skills/` and `~/.agents/skills/`.
+> assistant how to drive this kit. The installer copies them into
+> `~/.claude/skills/` and `~/.agents/skills/`; `exakit update` fetches a newer set.
 
 **What is verified, and what is assumed.** Claude Code reads `~/.claude/skills/`
 and picks these up on its next start — that path is tested. `~/.agents/skills/`
@@ -85,14 +85,14 @@ half-finished install or a hand deletion) and `available` (in none).
 ## How a skill reaches your agent
 
 Skills auto-load only from an agent's discovery folders, **not** from this repo
-path. The kit installs them for you:
+path. The installer copies each skill into the standard per-user locations so
+your CLI agent finds it automatically, and `exakit skills` shows the result:
 
 ```bash
-exakit skills-install
+exakit skills
 ```
 
-This copies each skill into the standard per-user locations so your CLI agent
-finds it automatically:
+The per-user locations:
 
 - **Claude Code** → `~/.claude/skills/<name>/`
 - **Codex / Cursor / other open-standard agents** → `~/.agents/skills/<name>/`

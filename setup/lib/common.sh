@@ -6434,7 +6434,29 @@ exakit_skills_list() {
         done <<EXAKIT_SKL_EOF
 $(exakit_skills_registry)
 EXAKIT_SKL_EOF
-        printf ']}\n'
+        # The same verdict the panel prints, as data: which set is placed,
+        # which is advertised, and the one command to run if they differ or a
+        # placed skill has gone missing. Nothing here touches the network -
+        # the advertised number comes from the cached versions document.
+        _skj_have="$(manifest_get components.skills.version 2>/dev/null || true)"
+        _skj_want="$(exakit_versions_value components.skills.version 2>/dev/null || true)"
+        _skj_missing=0
+        while IFS='|' read -r _skj_id _skj_sum; do
+            [ -n "$_skj_id" ] || continue
+            [ "$(exakit_skill_state "$_skj_id")" = "installed" ] || _skj_missing=$((_skj_missing + 1))
+        done <<EXAKIT_SKJ_EOF
+$(exakit_skills_registry)
+EXAKIT_SKJ_EOF
+        _skj_status="current"; _skj_next="null"
+        if [ -n "$_skj_have" ] && [ -n "$_skj_want" ] && [ "$_skj_have" != "$_skj_want" ]; then
+            _skj_status="update_pending"; _skj_next='"exakit update"'
+        elif [ "$_skj_missing" -gt 0 ]; then
+            _skj_status="missing"; _skj_next='"exakit skills-install"'
+        fi
+        printf '],"installed_version":%s,"advertised_version":%s,"status":"%s","next":%s}\n' \
+            "$([ -n "$_skj_have" ] && printf '"%s"' "$_skj_have" || printf null)" \
+            "$([ -n "$_skj_want" ] && printf '"%s"' "$_skj_want" || printf null)" \
+            "$_skj_status" "$_skj_next"
         return 0
     fi
 
@@ -9419,6 +9441,18 @@ _EXAKIT_CONN_EOF
     if [ -n "$_mcp" ]; then
         ui_panel_line "MCP configs:  in each AI client's config (list: exakit mcp-status)"
         ui_panel_line "MCP backups:  $(ui_tilde "$EXAKIT_MCP_DIR")"
+    fi
+    # The skill set, from the manifest and the CACHED versions document: info
+    # stays offline and cheap, and still says when `exakit update` has a newer
+    # set to fetch. The row is the same verdict `exakit skills` prints.
+    _cp_skills_have="$(manifest_get components.skills.version 2>/dev/null || true)"
+    _cp_skills_want="$(exakit_versions_value components.skills.version 2>/dev/null || true)"
+    if [ -n "$_cp_skills_have" ]; then
+        if [ -n "$_cp_skills_want" ] && [ "$_cp_skills_want" != "$_cp_skills_have" ]; then
+            ui_panel_line "Skills:       $_cp_skills_have ($_cp_skills_want available: exakit update)"
+        else
+            ui_panel_line "Skills:       $_cp_skills_have (list: exakit skills)"
+        fi
     fi
 
     # The JSON form rides on the Manifest row rather than trailing the panel as

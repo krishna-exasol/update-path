@@ -3740,7 +3740,22 @@ function Show-ExakitSkills {
         # Straight to the console stream: the caller discards this function's
         # pipeline output to read its boolean, which used to swallow the JSON
         # with it - `exakit skills --json` printed nothing and exited 0.
-        [Console]::Out.WriteLine(([pscustomobject]@{ skills = @($entries) } | ConvertTo-Json -Depth 4 -Compress))
+        # Twin of exakit_skills_list --json: the panel's verdict as data, from
+        # the manifest and the cached versions document (no network).
+        $skjHave = Get-ExakitManifestValue "components.skills.version"
+        $skjWant = Get-ExakitVersionsValue -Path "components.skills.version"
+        $skjMissing = @($entries | Where-Object { $_.state -ne "installed" }).Count
+        $skjStatus = "current"; $skjNext = $null
+        if ($skjHave -and $skjWant -and ("$skjHave" -ne "$skjWant")) { $skjStatus = "update_pending"; $skjNext = "exakit update" }
+        elseif ($skjMissing -gt 0) { $skjStatus = "missing"; $skjNext = "exakit skills-install" }
+        $skjDoc = [ordered]@{
+            skills = @($entries)
+            installed_version = $(if ($skjHave) { "$skjHave" } else { $null })
+            advertised_version = $(if ($skjWant) { "$skjWant" } else { $null })
+            status = $skjStatus
+            next = $skjNext
+        }
+        [Console]::Out.WriteLine(($skjDoc | ConvertTo-Json -Depth 4 -Compress))
         return $true
     }
 
@@ -4931,6 +4946,17 @@ function Show-ExakitConnectionPanel {
     if ($mcpConfigs) {
         Write-ExakitPanelLine "MCP configs:  in each AI client's config (list: exakit mcp-status)"
         Write-ExakitPanelLine "MCP backups:  $(Get-ExakitTilde $script:McpDir)"
+    }
+    # The skill set, from the manifest and the cached versions document. Twin
+    # of the Skills row in connection_panel.
+    $cpSkillsHave = Get-ExakitManifestValue "components.skills.version"
+    $cpSkillsWant = Get-ExakitVersionsValue -Path "components.skills.version"
+    if ($cpSkillsHave) {
+        if ($cpSkillsWant -and ("$cpSkillsWant" -ne "$cpSkillsHave")) {
+            Write-ExakitPanelLine "Skills:       $cpSkillsHave ($cpSkillsWant available: exakit update)"
+        } else {
+            Write-ExakitPanelLine "Skills:       $cpSkillsHave (list: exakit skills)"
+        }
     }
     # The JSON form rides on the Manifest row rather than trailing the panel as
     # a sentence of its own: it is the same fact, and a reader who wants the
