@@ -47,6 +47,34 @@ function Get-JsonTablesLogPath {
     return (Join-Path $script:LogDir "json-tables.log")
 }
 
+# Invoke-JsonTablesLogged <exe> <args...> - run an engine invocation with its
+# own words ALSO kept in the add-on's log. Error messages and the help
+# document say "see: exakit logs json-tables", and for that command to have an
+# answer, something has to write the file - nothing ever did. Returns the
+# exit code, like Invoke-ExakitLogged. Twin of _json_tables_logged.
+function Invoke-JsonTablesLogged {
+    param([Parameter(Mandatory)][string]$Exe, [string[]]$Arguments = @())
+    $log = Get-JsonTablesLogPath
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $log) | Out-Null
+        Add-Content -Path $log -Value ("=== " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + " " + $Exe + " " + ($Arguments -join " "))
+    } catch { }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $out = @(& $Exe @Arguments 2>&1) -join "`n"
+        $code = $LASTEXITCODE
+    } catch {
+        $out = "$_"
+        $code = 1
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    try { if ($out) { Add-Content -Path $log -Value $out } } catch { }
+    if ($out) { Write-ExakitLog "INFO" $out }
+    return $code
+}
+
 function Get-JsonTablesVenvPython {
     return (Join-Path $script:JsonTablesVenv "Scripts\python.exe")
 }
@@ -558,7 +586,7 @@ function Test-JsonTables {
         $sample = Join-Path $tmp "sample.json"
         Set-Content -Path $sample -Value '[{"id":1,"name":"alpha"},{"id":2,"name":"beta"}]' -Encoding ASCII
         $outDir = Join-Path $tmp "out"
-        $code = Invoke-ExakitLogged (Get-JsonTablesEnginePath) "--input" $sample "--output-dir" $outDir
+        $code = Invoke-JsonTablesLogged -Exe (Get-JsonTablesEnginePath) -Arguments @("--input", $sample, "--output-dir", $outDir)
         $parquet = @()
         if (Test-Path $outDir) {
             $parquet = @(Get-ChildItem -Path $outDir -Filter *.parquet -Recurse -ErrorAction SilentlyContinue)

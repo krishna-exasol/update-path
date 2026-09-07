@@ -256,7 +256,10 @@ has "status --json has a remedies map" '"remedies"' "$_rj"
 # A missing runtime (this fixture's container does not exist) is repaired by
 # the installer; a merely STOPPED one still answers "exakit start" - see the
 # remedy arms in the status heredoc.
-has "a missing runtime names the installer" 're-run the installer' "$_rj"
+# The remedy is the installer's RUNNABLE command now (AGK-08: "when remedy
+# is not null, run it"); the resume note lives beside it in remedy_hints.
+has "a missing runtime hands the runnable install command" 'curl -fsSL' "$_rj"
+has "...with the resume note as its hint" '"remedy_hints"' "$_rj"
 has "a missing pyexasol names its repair" 'exakit update' "$_rj"
 has "status --json exposes last_failure" '"last_failure"' "$_rj"
 
@@ -888,7 +891,7 @@ _jc="$WORK/jc"; mkdir -p "$_jc"
 _jc_out="$(EXAKIT_HOME="$_jc" bash "$ROOT/setup/exakit" sql --json 'SELECT 1' 2>/dev/null)"
 check "sql --json answers JSON when not installed" "yes" \
     "$(printf '%s' "$_jc_out" | python3 -m json.tool >/dev/null 2>&1 && echo yes || echo no)"
-has "and says why, with the remedy" '"remedy": "run the installer"' "$_jc_out"
+has "and says why, with a runnable remedy" '"remedy": "curl -fsSL' "$_jc_out"
 check "with the not-installed exit code" "4" \
     "$(EXAKIT_HOME="$_jc" bash "$ROOT/setup/exakit" sql --json 'SELECT 1' >/dev/null 2>&1; echo $?)"
 printf '{\n  "runtime": {\n    "type": "nano"\n  }\n}\n' > "$_jc/manifest.json"
@@ -920,14 +923,33 @@ print('%s|%s' % (row['status'], row['remedy']))")"
 # .last-failure note it reports.
 EXAKIT_SH_JC="$(cat "$ROOT/setup/exakit")"
 has "the kit-level status says no database, not 'not installed'" 'top_status = "no database"' "$EXAKIT_SH_JC"
-has "...with the installer as the remedy, never exakit start" \
-    '"re-run the installer (it resumes at the unfinished step)"' "$EXAKIT_SH_JC"
+has "...with the runnable installer command as the remedy, never exakit start" \
+    'remedies["database"] = install_cmd' "$EXAKIT_SH_JC"
 has "state queries raise the read-only flag" 'export EXAKIT_READONLY_QUERY=1' "$EXAKIT_SH_JC"
 check "and the note writer honours it" "kept-clean" "$( (
     EXAKIT_READONLY_QUERY=1 exakit_note_failure "should never land" 2>/dev/null
     [ -f "$(exakit_failure_note_file)" ] && echo WROTE || echo kept-clean
 ) )"
 has "status --json carries per-service urls" '"urls": umap' "$EXAKIT_SH_JC"
+
+echo
+echo "every remedy is runnable, and nothing advertises a rejected command:"
+# AGK-08: AGENTS.md line 21 says "when remedy is not null, run it" - so an
+# English sentence at that key breaks the very contract the doc states. Every
+# remedy in the remedies map is now a command; prose moved to remedy_hints.
+_rem_check="$(printf '%s' "$_rj" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+bad = [k for k, v in d.get('remedies', {}).items()
+       if ' — ' in v or v.split(' ', 1)[0] not in ('exakit', 'curl', 'irm', 'bash', 'sh')]
+print('all-runnable' if not bad else 'PROSE in ' + ','.join(bad))")"
+check "every remedies value starts with a command" "all-runnable" "$_rem_check"
+# SKL-06: `exakit autostart on` was named by three skills and two help
+# documents, and the CLI hard-rejects it. No shipped guidance may advertise it.
+check "no skill advertises 'exakit autostart on'" "0" \
+    "$(grep -rl 'exakit autostart on' "$ROOT/skills" 2>/dev/null | wc -l | tr -d ' ')"
+check "...and no help document either" "0" \
+    "$(grep -rl 'exakit autostart on' "$ROOT/setup/help" 2>/dev/null | wc -l | tr -d ' ')"
 has "dash-server declares its url hook" 'dash_server_url()' "$(cat "$ROOT/setup/lib/dash-server.sh")"
 
 echo "passed: $PASS, failed: $FAIL"

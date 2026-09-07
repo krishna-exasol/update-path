@@ -1133,7 +1133,9 @@ EXAKIT_JSON_NORMALISE_PY
         *) ;;   # no python, or an unreadable file: let the engine have its say
     esac
 
-    if ! run_logged "$EXAKIT_JSON_TABLES_BIN" ingest \
+    # Through _json_tables_logged so the engine's own words land in the
+    # add-on's log too - the very file the failure message below points at.
+    if ! run_logged _json_tables_logged "$EXAKIT_JSON_TABLES_BIN" ingest \
             --input "$_jl_input" --output-dir "$_jl_tmp/out"; then
         rm -rf "$_jl_tmp"
         warn "This JSON file could not be read - see: exakit logs json-tables"

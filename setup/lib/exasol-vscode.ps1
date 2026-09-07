@@ -35,10 +35,14 @@ function Get-ExasolVscodeCodeCli {
     if ($recorded -and (Test-Path $recorded)) { return $recorded }
     $found = Get-Command code -ErrorAction SilentlyContinue
     if ($found -and $found.Source) { return $found.Source }
-    $candidates = @(
-        (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd"),
-        "$env:ProgramFiles\Microsoft VS Code\bin\code.cmd"
-    )
+    # Guarded: under the global Stop preference, Join-Path with a null base
+    # (LOCALAPPDATA does not exist on a non-Windows pwsh, and can be absent in
+    # a stripped service environment) throws - and this resolver is reached
+    # from the version table through the system-present detector, where one
+    # null environment variable used to take down the whole command.
+    $candidates = @()
+    if ($env:LOCALAPPDATA) { $candidates += (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd") }
+    if ($env:ProgramFiles) { $candidates += (Join-Path $env:ProgramFiles "Microsoft VS Code\bin\code.cmd") }
     foreach ($candidate in $candidates) {
         if ($candidate -and (Test-Path $candidate)) { return $candidate }
     }

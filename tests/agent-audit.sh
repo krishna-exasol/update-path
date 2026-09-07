@@ -183,7 +183,10 @@ check "remedies.pyexasol is exakit update" "exakit update" "$(printf '%s' "$_sj"
 # database remedy is the installer, not "exakit start" - which was the
 # pre-runtime remedy bug this suite used to pin as correct. The property under
 # test is unchanged: the database's remedy outranks the unfinished steps'.
-check "the missing database still ranks first in the hoisted remedy" "re-run the installer (it resumes at the unfinished step)" "$(printf '%s' "$_sj" | python3 -c 'import json,sys; print(json.load(sys.stdin)["remedy"])' 2>/dev/null)"
+# ...and per AGK-08 the remedy is the installer's RUNNABLE command, not prose.
+check "the missing database still ranks first in the hoisted remedy" "runnable-install-command" "$(printf '%s' "$_sj" | python3 -c 'import json,sys
+r = json.load(sys.stdin)["remedy"]
+print("runnable-install-command" if r.startswith(("curl ", "irm ")) and "install" in r else r)' 2>/dev/null)"
 _sj_full="$(python3 - "$EXAKIT_MANIFEST" "$CLI" <<'PY'
 import json, os, subprocess, sys
 manifest, cli = sys.argv[1:3]

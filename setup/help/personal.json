@@ -44,10 +44,13 @@
     },
     {
       "command": "exakit autostart",
-      "options": "[on|off]",
+      "options": "",
       "summary": "Come back at login?",
       "examples": [
-        "exakit autostart on"
+        "exakit autostart"
+      ],
+      "environment": [
+        "EXAKIT_AUTOSTART_CHANGE=1|0 pre-answers the question for scripts"
       ]
     },
     {
