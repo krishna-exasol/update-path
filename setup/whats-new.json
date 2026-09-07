@@ -24,7 +24,6 @@
     "exakit marketplace: dashboards, VS Code, JSON loading, a scheduler.",
     "exakit update applies the recommended version set, AI skills too.",
     "exakit version shows installed and recommended versions.",
-    "exakit sql runs SQL or a file, and --json returns one object.",
     "Agents can drive every command: --json output, exit 2 on bad input.",
     "Services return after a reboot. exakit uninstall picks what goes."
   ]
