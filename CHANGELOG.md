@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - **Docs: MARKETPLACE-FLOWS.md is folded into MARKETPLACE.md.** The marketplace had two documents side by side, one for the user's journey (six scenarios as flowcharts, the surfaces table, the quick reference) and one for the maintainer (the contract, where the pieces live, the add-a-new-add-on walkthrough), each opening with a pointer at the other. They are one document now, in that order: contract, scenarios, walkthrough. Every section heading and anchor is unchanged, so the flowcharts' click targets and every external link into either file still resolve; the README's two links become one.
 
@@ -126,9 +126,6 @@
 - Fix: the free-disk guard now checks the filesystems the install actually writes to instead of one directory. On Windows that is Docker's real storage location (with the WSL2 backend everything lands in a virtual disk under `%LOCALAPPDATA%\Docker\wsl`, which users can relocate to another drive) plus the kit home. On Linux it adds the container engine's data root, which is frequently a different filesystem from `$HOME`. Under WSL it adds the Windows system drive: `df` inside a distro reports the virtual disk's nominal size, so a Windows machine with 3 GB free happily passed a 10 GB check and then failed mid-pull with "no space left on device". When space is short, the engine's own `system df` is shown alongside the `prune` command that reclaims it.
 - Fix: a failed step can no longer end the install. `pyexasol`'s live validation ran outside its soft-step wrapper on both platforms, so the step was soft in name only; the Windows data-load, MCP client setup and skills steps caught only the kit's own failure type, so any other error (a cmdlet error, a bad path) aborted a run whose database was already up. Every step is now isolated, and `EXAKIT_DATASETS` naming no bundled dataset warns instead of ending the run.
 - Fix: steps that fail are all accounted for at the end. The sample-data load, the AI client (MCP) setup and the skills copy previously failed silently as far as the closing summary was concerned. Each now appears in it, and the summary itself moved below the connection panel — so the last thing on screen is what is missing, why, and the one command that installs it (`pyexasol is not installed: ... / reinstall it with: exakit update pyexasol`).
-
-## 0.2.0
-
 - **Changed default:** `EXAKIT_VERSION_POLICY` is now `manifest`. An install takes the version set the maintainers tested together, published as `versions.json` at the root of this repository, instead of resolving each component from its own upstream. `latest` keeps the old behaviour as an escape hatch, and any other value installs the built-in fallbacks with no network at all.
 - Feat: `versions.json` as the update mechanism — maintainers change a version by merging a pull request; installers and `exakit update-check` / `exakit update` read it. Component bumps no longer need a kit release. Resolution degrades env override → fresh fetch → cached copy → the copy that shipped with the kit → compiled-in fallbacks, so no command can fail because a version lookup did not answer.
 - Feat: `exakit update-check` compares installed against advertised versions per component, with a Severity column, the maintainer's note under the row it belongs to, `min_kit_version` gating, and the exact command for each row. It is the only command that prints the table: `exakit version` shows what is installed plus a short hint, and `exakit update` prints just the work it is about to do.
