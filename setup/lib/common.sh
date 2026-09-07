@@ -5949,15 +5949,37 @@ exakit_acquire_lock() {
     _lock="$EXAKIT_HOME/.install.lock"
     mkdir -p "$EXAKIT_HOME"
     if [ -f "$_lock" ]; then
-        _pid="$(cat "$_lock" 2>/dev/null)"
-        if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+        _pid="$(sed -n 1p "$_lock" 2>/dev/null)"
+        if exakit_lock_holder_alive "$_lock"; then
             die "Another setup run is already in progress (pid $_pid). Wait for it to finish; if you are sure it is dead, remove $_lock and re-run."
         fi
         warn "Found a lock from an interrupted run — removing it and continuing"
         rm -f "$_lock"
     fi
-    printf '%s' "$$" > "$_lock"
+    # Line 1 the pid, line 2 the process start time. A pid alone is reused by
+    # the OS, and a crashed installer's pid landing on an unrelated process kept
+    # `exakit status` saying "installing" until that process exited.
+    printf '%s\n%s\n' "$$" "$(exakit_process_start_time "$$")" > "$_lock"
     EXAKIT_LOCK_FILE="$_lock"
+}
+
+# exakit_process_start_time <pid> — the start time ps reports, trimmed; empty
+# when ps cannot say. `lstart` is the one column macOS and Linux ps share.
+exakit_process_start_time() {
+    ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//;s/ *$//' | head -n 1
+}
+
+# exakit_lock_holder_alive <lockfile> — true only when the pid in the lock is
+# alive AND (if the lock recorded one) started when the lock says it did. An
+# old one-line lock without a start time falls back to the pid check.
+exakit_lock_holder_alive() {
+    [ -f "${1:-}" ] || return 1
+    _lha_pid="$(sed -n 1p "$1" 2>/dev/null)"
+    _lha_start="$(sed -n 2p "$1" 2>/dev/null)"
+    [ -n "$_lha_pid" ] || return 1
+    kill -0 "$_lha_pid" 2>/dev/null || return 1
+    [ -n "$_lha_start" ] || return 0
+    [ "$(exakit_process_start_time "$_lha_pid")" = "$_lha_start" ]
 }
 
 exakit_release_lock() {
@@ -8576,6 +8598,11 @@ exakit_maybe_offer_data_load() {
         if [ "$_local_status" -eq 2 ]; then
             _data_notes="${_data_notes}info|Local file load skipped.
 "
+        elif [ "$_local_status" -eq 3 ]; then
+            # Refused as bad input (the file, not the install): say so, but
+            # do not book it as a failed step.
+            _data_notes="${_data_notes}warn|The local file was refused (see above). Load another any time with: exakit data-load
+"
         elif [ "$_local_status" -ne 0 ]; then
             _data_notes="${_data_notes}warn|Data loading did not finish cleanly. Retry any time with: exakit data-load
 "
@@ -9991,6 +10018,10 @@ _exakit_autostart_register() {
                 printf '  <key>StandardErrorPath</key><string>%s/autostart-%s.log</string>\n' "$EXAKIT_LOG_DIR" "$_ar_id"
                 printf '</dict>\n</plist>\n'
             } > "$_ar_plist" || { warn "Could not write $_ar_plist"; return 1; }
+            # launchd creates the log with the default umask (0644). Every other
+            # kit log is owner-only; create these first so they are too.
+            ( umask 077; : >> "$EXAKIT_LOG_DIR/autostart-$_ar_id.log" ) 2>/dev/null
+            chmod 600 "$EXAKIT_LOG_DIR/autostart-$_ar_id.log" 2>/dev/null
             # Load it now so the entry is live without a logout, and so a
             # rewritten plist replaces the old registration.
             launchctl unload "$_ar_plist" >/dev/null 2>&1
