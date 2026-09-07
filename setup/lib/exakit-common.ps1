@@ -4431,6 +4431,19 @@ function Show-ExakitMarketplaceMenu {
         return
     }
 
+    # WITHOUT A TERMINAL, THE ANSWER IS SKIP. The pre-ticked rows exist so a
+    # human's bare Enter installs what is on offer; keeping them as the answer
+    # when nobody could see the question turned `exakit marketplace` from a
+    # browse into a full install with a live daemon. Installing without a
+    # terminal takes an explicit answer: EXAKIT_MARKETPLACE_ADDONS, or ids on
+    # the command line. Twin of the same guard in exakit_marketplace_menu.
+    if (-not (Test-ExakitInteractive)) {
+        Info "No terminal to ask on - nothing was installed."
+        Info "See what is available (read-only): exakit marketplace --list   (--json for scripts)"
+        Info "Install explicitly: exakit marketplace <id>   or set EXAKIT_MARKETPLACE_ADDONS=<ids>|all"
+        return
+    }
+
     # The selection - the same live table the data-load menu draws: a group row
     # with the add-ons hanging off connectors (UiTee/UiCorner from the ui palette;
     # ASCII in plain mode), the available add-ons pre-selected so Enter alone
@@ -4512,6 +4525,64 @@ function Show-ExakitMarketplaceMenu {
         return
     }
     Invoke-ExakitMarketplaceApply -Ids $picked
+}
+
+# Show-ExakitMarketplaceList - the READ-ONLY answer to "what add-ons exist and
+# where do they stand?", for agents and scripts that must never trigger an
+# install by looking. One row per registered add-on, whatever its state;
+# nothing here writes the manifest, a failure note, or a log. The status
+# vocabulary is fixed and shared with the shell half: installed / available /
+# managed outside the kit / not in this kit copy / not available on this
+# machine. Twin of exakit_marketplace_list in common.sh.
+function Show-ExakitMarketplaceList {
+    param([switch]$Json)
+    $entries = @()
+    foreach ($addon in Get-ExakitMarketplaceAddons) {
+        $status = ""
+        $version = ""
+        $reason = ""
+        if (-not (Test-ExakitAddonApplicable $addon.Id) -and
+            -not (Test-ExakitMarketplaceAddonInstalled $addon.Id)) {
+            $status = "not available on this machine"
+            $reason = "" + (Get-ExakitAddonApplicableReason $addon.Id)
+        } elseif (Test-ExakitMarketplaceAddonInstalled $addon.Id) {
+            $status = "installed"
+            $version = Get-ExakitComponentCurrent $addon.Id
+            if (-not $version -and (Get-Command $addon.VersionFn -ErrorAction SilentlyContinue)) {
+                $version = & $addon.VersionFn
+            }
+        } elseif (Test-ExakitAddonSystemPresent $addon.Id) {
+            $status = "managed outside the kit"
+        } elseif (-not (Get-Command $addon.InstallFn -ErrorAction SilentlyContinue)) {
+            $status = "not in this kit copy"
+        } else {
+            $status = "available"
+            $fallback = ""
+            if ($addon.FallbackVar) {
+                $fv = Get-Variable -Name $addon.FallbackVar -Scope Script -ErrorAction SilentlyContinue
+                if ($fv) { $fallback = "" + $fv.Value }
+            }
+            $version = Get-ExakitAddonAdvertisedVersion -Id $addon.Id -Fallback $fallback
+        }
+        $version = Get-ExakitVersionPlain ("" + $version)
+        $entry = [ordered]@{ id = $addon.Id; status = $status; installed = ($status -eq "installed") }
+        if ($version) { $entry.version = $version }
+        if ($reason) { $entry.reason = $reason }
+        $entries += [pscustomobject]$entry
+    }
+    if ($Json) {
+        # One shape on both halves: a top-level object with an "addons" array.
+        [pscustomobject]@{ addons = $entries } | ConvertTo-Json -Depth 4
+        return
+    }
+    foreach ($entry in $entries) {
+        $line = ("{0,-16} {1}" -f $entry.id, $entry.status)
+        if ($entry.PSObject.Properties["version"]) { $line += " " + $entry.version }
+        Write-Host $line
+        if ($entry.PSObject.Properties["reason"]) {
+            Write-Host ("{0,-16} ({1})" -f "", $entry.reason)
+        }
+    }
 }
 
 # The add-ons table: the rows a reader ticks in the selection are the rows the

@@ -724,6 +724,9 @@ check "without the host app it is hidden everywhere" \
 # With VS Code present it is a normal, selectable add-on again.
 _with_code="$( (
     exasol_vscode_code_cli() { printf '/stub/code\n'; }
+    # The menu installs nothing without a terminal, so probing its DRAWN
+    # content needs one faked; the guard itself has its own assertions below.
+    _exakit_prompt_tty() { printf 'stub\n'; }
     printf 'applicable=%s ' "$(_exakit_addon_applicable exasol-vscode && echo yes || echo no)"
     printf 'in-menu=%s' "$(exakit_marketplace_menu 2>&1 | grep -c exasol-vscode)"
 ) )"
@@ -1342,6 +1345,8 @@ check "a manually installed add-on reads as present" "present" "$( (
 ) )"
 check "the menu says so instead of offering an install" "managed outside the kit" "$( (
     PATH="$WORK/manual-bin:$PATH"
+    # A faked terminal, or the no-TTY guard answers before the row is drawn.
+    _exakit_prompt_tty() { printf 'stub\n'; }
     # The row sits inside a panel now, so strip whatever border precedes it -
     # ASCII here, since a redirected run is always in plain mode - before
     # anchoring on the id.
@@ -1895,6 +1900,41 @@ check "...and so does the error printer" "2" \
 # The log still gets every line: deferring must never mean losing.
 check "the shell still logs both"       "2" \
     "$(printf '%s\n' "$COMMON_D" | grep -cE 'if _exakit_defer_under_addon_table .*_exakit_log_file')"
+
+echo
+echo "without a terminal, browsing never installs:"
+# THE REGRESSION THIS PINS: with no TTY and no env answer, the pre-ticked menu
+# rows used to stand as the answer, so `exakit marketplace` - the command every
+# doc calls "browse" - performed a full install with a live daemon, triggered
+# by agents that were told to look, not to install. Skip is the no-TTY answer.
+_mm_notty="$( (
+    _exakit_prompt_tty() { :; }                  # no terminal anywhere
+    _exakit_marketplace_apply() { printf 'INSTALLED %s\n' "$1"; }
+    # Offline: the interactive path resolves descriptions before the guard.
+    exakit_marketplace_addon_description() { printf 'stub\n'; }
+    exakit_marketplace_menu 2>&1
+) )"
+has  "no TTY answers Skip out loud" "nothing was installed" "$_mm_notty"
+lacks "and nothing is installed"    "INSTALLED"             "$_mm_notty"
+has  "the read-only surface is named"  "marketplace --list" "$_mm_notty"
+# The env answer still installs without a TTY - that is the explicit consent.
+_mm_env="$( (
+    _exakit_prompt_tty() { :; }
+    _exakit_marketplace_apply() { printf 'INSTALLED %s\n' "$1"; }
+    EXAKIT_MARKETPLACE_ADDONS=json-tables exakit_marketplace_menu 2>&1
+) )"
+has "an explicit env answer still installs" "INSTALLED json-tables" "$_mm_env"
+
+echo
+echo "the read-only list surface:"
+_mm_list="$(cover_every_addon; exakit_marketplace_list 0 2>&1)"
+has "every add-on has a row" "json-tables" "$_mm_list"
+has "...dash-server too"     "dash-server" "$_mm_list"
+_mm_listjson="$(cover_every_addon; exakit_marketplace_list 1 2>/dev/null)"
+check "the JSON form is valid JSON" "yes" \
+    "$(printf '%s' "$_mm_listjson" | python3 -m json.tool >/dev/null 2>&1 && echo yes || echo no)"
+has "and carries a status per add-on" '"status": ' "$_mm_listjson"
+has "and an installed boolean"        '"installed": ' "$_mm_listjson"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

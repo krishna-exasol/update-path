@@ -761,14 +761,45 @@ cmd_uninstall() {
     # plan-display call below.
     _uni_yes=0
     _uni_dry=0
+    _uni_addon=""
     for _uni_arg in "$@"; do
         case "$_uni_arg" in
             -y|--yes)      _uni_yes=1 ;;
             -n|--dry-run)  _uni_dry=1 ;;
-            *) reject "Unknown option '$_uni_arg' for uninstall (supported: --yes, --dry-run)." ;;
+            -*) reject "Unknown option '$_uni_arg' for uninstall (supported: --yes, --dry-run, or one add-on id)." ;;
+            *)
+                # A marketplace add-on by name: selective removal an agent or a
+                # script can call, instead of the TTY-only menu being the sole
+                # route to removing one piece.
+                _exakit_addon_registered "$_uni_arg" || \
+                    reject "Unknown uninstall target '$_uni_arg' (known add-ons: $(exakit_marketplace_addons | cut -d'|' -f1 | tr '\n' ' ' | sed 's/ $//'); bare 'exakit uninstall' removes the kit)."
+                [ -n "$_uni_addon" ] && reject "uninstall takes at most one add-on id."
+                _uni_addon="$_uni_arg"
+                ;;
         esac
     done
     exakit_init_logging 2>/dev/null || true
+
+    if [ -n "$_uni_addon" ]; then
+        [ -f "$EXAKIT_MANIFEST" ] || die "No installation found. Run the installer first."
+        if ! exakit_marketplace_addon_installed "$_uni_addon" 2>/dev/null; then
+            info "$_uni_addon is not installed — nothing to remove."
+            exit 0
+        fi
+        if [ "$_uni_dry" = 1 ]; then
+            info "Dry run — would remove the $_uni_addon add-on (its service, binary and credential; nothing else)."
+            exit 0
+        fi
+        if [ "$_uni_yes" -ne 1 ]; then
+            confirm "Remove the $_uni_addon add-on?" n || {
+                info "Nothing was removed."
+                exit 0
+            }
+        fi
+        _exakit_uninstall_component "$_uni_addon" 0
+        ok "$_uni_addon removed. Reinstall any time with: exakit marketplace $_uni_addon"
+        exit 0
+    fi
 
     # Nothing installed anywhere we can see? Say so and stop.
     if [ ! -f "$EXAKIT_MANIFEST" ] && [ ! -e "$EXAKIT_BIN_DIR/exasol" ] && \
@@ -1164,10 +1195,42 @@ cmd_skills() {
     exakit_skills_list "${1:-}"
 }
 
+# cmd_marketplace [--list [--json]] [<addon-id>...] — bare, it browses (and
+# without a terminal it installs NOTHING; the menu says how to ask
+# explicitly). --list is the read-only surface an agent can always call;
+# --json makes it machine-readable. Ids are a targeted install: `exakit
+# marketplace dash-server` installs dash-server and nothing else — it used to
+# silently DISCARD the id and install the other pending add-ons instead.
 cmd_marketplace() {
     [ -f "$EXAKIT_MANIFEST" ] || die "No installation found. Run the installer first."
+    _cm_list=0
+    _cm_json=0
+    _cm_ids=""
+    for _cm_arg in "$@"; do
+        case "$_cm_arg" in
+            --list) _cm_list=1 ;;
+            --json) _cm_json=1 ;;
+            -*) reject "Unknown option '$_cm_arg' for marketplace (supported: --list, --json, or add-on ids to install)." ;;
+            *)
+                if _exakit_addon_registered "$_cm_arg"; then
+                    _cm_ids="${_cm_ids:+$_cm_ids,}$_cm_arg"
+                else
+                    reject "Unknown marketplace add-on '$_cm_arg' (known: $(exakit_marketplace_addons | cut -d'|' -f1 | tr '\n' ' ' | sed 's/ $//'))."
+                fi
+                ;;
+        esac
+    done
+    if [ "$_cm_list" -eq 1 ] || [ "$_cm_json" -eq 1 ]; then
+        [ -n "$_cm_ids" ] && reject "marketplace --list is read-only and cannot be combined with add-on ids to install."
+        exakit_marketplace_list "$_cm_json"
+        return $?
+    fi
     exakit_init_logging
-    exakit_marketplace_menu "$@"
+    if [ -n "$_cm_ids" ]; then
+        EXAKIT_MARKETPLACE_ADDONS="$_cm_ids" exakit_marketplace_menu
+        return $?
+    fi
+    exakit_marketplace_menu
 }
 
 usage() {
@@ -1529,7 +1592,7 @@ fi
 # --bogus` handed the flag to grep. Bad input is refused before the command
 # starts, the way status and sql already did. Commands with their own option
 # parser (sql, status, version, logs, autostart, data-load, repair-runtime,
-# mcp-setup, mcp-status) keep it; this covers the rest.
+# mcp-setup, mcp-status, marketplace, uninstall) keep it; this covers the rest.
 _exakit_refuse_unknown_options() {
     _ruo_cmd="$1"; _ruo_allowed="$2"; shift 2
     for _ruo_arg in "$@"; do
@@ -1588,7 +1651,7 @@ case "${1:-help}" in
                   *) _with_notice cmd_skills ;;
               esac ;;
     skills-install) shift; _exakit_refuse_unknown_options skills-install "" "$@"; _with_notice cmd_skills_install ;;
-    marketplace) shift; _exakit_refuse_unknown_options marketplace "" "$@"; _with_notice cmd_marketplace "$@" ;;
+    marketplace) shift; _with_notice cmd_marketplace "$@" ;;
     upgrade-kit2)  cmd_kit2_script upgrade-kit2.sh ;;
     rollback-kit2) cmd_kit2_script rollback-kit2.sh ;;
     uninstall) shift; cmd_uninstall "$@" ;;

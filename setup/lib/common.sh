@@ -3965,12 +3965,27 @@ EXAKIT_MM_COVERED
         return 0
     fi
 
+    # WITHOUT A TERMINAL, THE ANSWER IS SKIP. The pre-ticked rows exist so a
+    # human's bare Enter installs what is on offer; keeping them as the answer
+    # when nobody could see the question turned `exakit marketplace` from a
+    # browse into a full multi-hundred-MB install with a live daemon — run by
+    # agents that were told to look, not to install. Installing without a
+    # terminal takes an explicit answer: EXAKIT_MARKETPLACE_ADDONS, or ids on
+    # the command line. ⇄ twin: the same guard in Show-ExakitMarketplaceMenu.
+    if [ -z "$(_exakit_prompt_tty)" ]; then
+        info "No terminal to ask on — nothing was installed."
+        info "See what is available (read-only): exakit marketplace --list   (--json for scripts)"
+        info "Install explicitly: exakit marketplace <id>   or EXAKIT_MARKETPLACE_ADDONS=<ids>|all exakit marketplace"
+        return 0
+    fi
+
     # The selection — the same live table the data-load menu draws: a group row
     # with the add-ons hanging off connectors (UI_TEE/UI_CORNER from the ui
     # palette; ASCII in plain mode), the available add-ons pre-selected so Enter
-    # alone installs what is on offer, and Skip as the exclusive opt-out. A
-    # non-interactive run keeps the pre-selected defaults, exactly like the
-    # data-load menu (EXAKIT_MARKETPLACE_ADDONS=none is the scripted opt-out).
+    # alone installs what is on offer, and Skip as the exclusive opt-out. An
+    # interactive run that cannot draw still keeps the pre-selected defaults
+    # (EXAKIT_MARKETPLACE_ADDONS=none is the scripted opt-out); a run with no
+    # terminal at all never reaches this point.
     # Mirrors exakit_data_load_select / Show-ExakitMarketplaceMenu.
     #
     # The rows the reader ticks here are the rows _exakit_marketplace_apply then
@@ -4027,6 +4042,72 @@ EXAKIT_MM_COVERED
         return 0
     fi
     _exakit_marketplace_apply "$_mm_picked"
+}
+
+# exakit_marketplace_list <json01> — the READ-ONLY answer to "what add-ons
+# exist and where do they stand?", for agents and scripts that must never
+# trigger an install by looking. One row per registered add-on, whatever its
+# state; nothing here writes the manifest, a failure note, or a log. The
+# status vocabulary is fixed: installed / available / managed outside the
+# kit / not in this kit copy / not available on this machine.
+exakit_marketplace_list() {
+    _ml_json="${1:-0}"
+    _ml_rows=""
+    while IFS='|' read -r _ml_id _ml_label; do
+        [ -n "$_ml_id" ] || continue
+        _ml_ver=""
+        _ml_reason=""
+        if ! _exakit_addon_applicable "$_ml_id" 2>/dev/null && \
+           ! exakit_marketplace_addon_installed "$_ml_id" 2>/dev/null; then
+            _ml_status="not available on this machine"
+            _ml_reason="$(_exakit_addon_applicable_reason "$_ml_id" 2>/dev/null || true)"
+        elif exakit_marketplace_addon_installed "$_ml_id"; then
+            _ml_status="installed"
+            _ml_ver="$(exakit_version_plain "$(exakit_component_current "$_ml_id" 2>/dev/null || true)")"
+        elif _exakit_addon_system_present "$_ml_id"; then
+            _ml_status="managed outside the kit"
+        elif ! exakit_marketplace_addon_available "$_ml_id"; then
+            _ml_status="not in this kit copy"
+        else
+            _ml_status="available"
+            _ml_ver="$(exakit_version_plain "$(exakit_component_available "$_ml_id" 2>/dev/null || true)")"
+        fi
+        _ml_rows="$_ml_rows$_ml_id|$_ml_status|$_ml_ver|$_ml_reason
+"
+    done <<EXAKIT_ML_EOF
+$(exakit_marketplace_addons)
+EXAKIT_ML_EOF
+
+    if [ "$_ml_json" = "1" ]; then
+        _ml_first=1
+        printf '{\n  "addons": [\n'
+        while IFS='|' read -r _ml_id _ml_status _ml_ver _ml_reason; do
+            [ -n "$_ml_id" ] || continue
+            [ "$_ml_first" -eq 1 ] || printf ',\n'
+            _ml_first=0
+            printf '    {"id": "%s", "status": "%s", "installed": %s' \
+                "$_ml_id" "$_ml_status" \
+                "$([ "$_ml_status" = "installed" ] && echo true || echo false)"
+            [ -n "$_ml_ver" ] && printf ', "version": "%s"' "$_ml_ver"
+            [ -n "$_ml_reason" ] && printf ', "reason": "%s"' \
+                "$(printf '%s' "$_ml_reason" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+            printf '}'
+        done <<EXAKIT_ML_JSON
+$_ml_rows
+EXAKIT_ML_JSON
+        printf '\n  ]\n}\n'
+        return 0
+    fi
+
+    while IFS='|' read -r _ml_id _ml_status _ml_ver _ml_reason; do
+        [ -n "$_ml_id" ] || continue
+        printf '%-16s %s%s%s\n' "$_ml_id" "$_ml_status" \
+            "${_ml_ver:+ }" "$_ml_ver"
+        [ -n "$_ml_reason" ] && printf '%-16s %s\n' "" "($_ml_reason)"
+    done <<EXAKIT_ML_OUT
+$_ml_rows
+EXAKIT_ML_OUT
+    return 0
 }
 
 # exakit_marketplace_offer — the closing moment of an install: everything ran,

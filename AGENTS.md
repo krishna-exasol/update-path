@@ -41,7 +41,7 @@ irm https://raw.githubusercontent.com/krishna-exasol/update-path/main/install.ps
 
 The installer is **fully unattended-safe**. With no TTY attached (the normal case for an agent shell) every question takes a safe default: all bundled datasets are loaded, and every AI client that is installed on the machine but not yet connected gets an MCP config. Nothing ever hangs waiting for input.
 
-Two things the unattended path does that are easy to miss. **A closed stdin is not enough to be headless:** when a controlling terminal exists (an agent launched from a user's shell), the installer reattaches its menus to `/dev/tty` so a human can still answer; pre-answer with the env vars below and it never waits. **`exakit marketplace` without a terminal installs every add-on**, because the pre-ticked defaults stand; that is by design. To only look, read `exakit version --json`; to answer, set `EXAKIT_MARKETPLACE_ADDONS=none` or a list of ids.
+Two things the unattended path does that are easy to miss. **A closed stdin is not enough to be headless:** when a controlling terminal exists (an agent launched from a user's shell), the installer reattaches its menus to `/dev/tty` so a human can still answer; pre-answer with the env vars below and it never waits. **`exakit marketplace` without a terminal installs nothing** — browsing is never an install. To look, run `exakit marketplace --list` (`--json` for a machine-readable answer); to install, name ids (`exakit marketplace dash-server`) or set `EXAKIT_MARKETPLACE_ADDONS` to an ids csv, `all`, or `none`.
 
 One caveat when driving a **WSL** install from the Windows side (`wsl.exe -- bash -c "curl ... | sh"`): wsl.exe can attach a console that looks interactive but never delivers keypresses, so menus render and block. Either run the command detached (`setsid sh -c '...' < /dev/null` on Linux/WSL; `setsid` does **not** exist on macOS, where `nohup sh -c '...' </dev/null &` is the equivalent) or pre-answer everything with the env vars below.
 
@@ -154,10 +154,14 @@ What an agent needs to know:
 
 ## Marketplace add-ons (optional)
 
-Optional tools live behind `exakit marketplace`, never in the install flow. Interactively it is a checkbox menu (Space selects, Enter installs); an agent answers with the environment instead:
+Optional tools live behind `exakit marketplace`, never in the install flow. Interactively it is a checkbox menu (Space selects, Enter installs); without a terminal it installs nothing. An agent looks with `exakit marketplace --list` (`--json` for scripts), installs by naming ids or answering with the environment, and removes one add-on with `exakit uninstall <id> --yes`:
 
 ```bash
+exakit marketplace --list                                  # read-only: every add-on and its state
+exakit marketplace --json                                  # the same, machine-readable
+exakit marketplace dash-server                             # install exactly this one
 EXAKIT_MARKETPLACE_ADDONS=dash-server exakit marketplace   # ids csv, or all / none
+exakit uninstall json-tables --yes                         # remove one add-on, nothing else
 ```
 
 - **dash-server** — agent-operated Dash hosting: build live dashboards on the local database through its MCP control plane (`http://127.0.0.1:5100/mcp`; start it with `dash-server`). Once it is installed, `exakit mcp-setup` registers that control plane as an MCP server named `dash-server` for Cursor, Claude Code, Codex, GitHub Copilot, Gemini CLI, OpenCode and Continue — Claude Desktop is the one client left out, as a note rather than a warning, because its config file has no shape for a remote server (the app takes those through its own Connectors settings) — so after the client restarts you drive it with tools rather than raw HTTP.
