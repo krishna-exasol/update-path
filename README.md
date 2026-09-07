@@ -222,7 +222,7 @@ https://github.com/user-attachments/assets/77916db0-d273-4720-8d59-1aedac95d5e8
 | Docker&nbsp;installed&nbsp;but&nbsp;not&nbsp;running? | Start Docker Desktop, run the install command again. |
 | Docker Desktop runs on Windows<br>but WSL can't see it? | Docker Desktop → Settings → Resources → **WSL integration** → enable your distro → Apply & restart (the installer detects and flags this too). |
 | `exakit` not recognized after<br>a Windows install? | Re-run the install command. It adds `~\.local\bin` to your user PATH and repairs the command automatically. |
-| Port&nbsp;8563&nbsp;already&nbsp;taken? | `EXAKIT_DB_PORT=8564` before the install command. |
+| Port&nbsp;8563&nbsp;already&nbsp;taken? | Linux, WSL and Windows: `EXAKIT_DB_PORT=8564` before the install command. macOS deploys on 8563 itself — an existing Exasol there is adopted, anything else must be stopped first. |
 | Behind&nbsp;a&nbsp;corporate&nbsp;proxy? | `export HTTPS_PROXY=...` and re-run. |
 | Where's&nbsp;the&nbsp;deep-dive&nbsp;for&nbsp;my&nbsp;OS? | [macOS](quickstarts/macos.md) · [WSL](quickstarts/windows-wsl.md) · [Windows + Docker](quickstarts/windows-docker.md) |
 | Installing&nbsp;over&nbsp;a&nbsp;database<br>I&nbsp;already&nbsp;have? | An existing database is adopted, never replaced. Running or stopped, it is reused with its data intact. Only a database that cannot start at all is replaced, and the installer warns you first. |

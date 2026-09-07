@@ -153,6 +153,18 @@ function Get-JsonTablesSystemPresent {
     return ($LASTEXITCODE -eq 0)
 }
 
+# Twin of json_tables_latest: what is INSTALLABLE is what the kit's packaging
+# workflow has already built and published - the version versions.json
+# advertises - which is a stricter thing than whatever upstream tagged. The
+# generic repo/package lookup answered the upstream tag (or nothing), so the
+# Windows update check either offered a build that does not exist yet or could
+# not see the add-on at all.
+function Get-JsonTablesLatest {
+    $advertised = Get-ExakitVersionsValue -Path "components.json-tables.version"
+    if ($advertised) { return $advertised }
+    return $script:JsonTablesVersionFallback
+}
+
 # Twin of json_tables_installed_version: both halves must really be here. The
 # manifest record alone is not evidence - it may have been written by another
 # machine, or the files removed since.

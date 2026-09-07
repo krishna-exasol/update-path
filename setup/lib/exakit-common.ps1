@@ -3966,6 +3966,8 @@ function Get-ExakitMarketplaceAddons {
             AutostartFn = "Get-ExasolSchedulerAutostartCommand"
             LogFn       = "Get-ExasolSchedulerLogPath"
             SummaryFn   = "Get-ExasolSchedulerSummary"
+            SystemPresentFn = "Get-ExasolSchedulerSystemPresent"
+            LatestFn     = "Get-ExasolSchedulerLatest"
             ApplicableFn = "Test-ExasolSchedulerApplicable"
             ReasonFn     = "Get-ExasolSchedulerApplicableReason"
             EnvVar      = "EXAKIT_EXASOL_SCHEDULER_VERSION"
@@ -3982,6 +3984,7 @@ function Get-ExakitMarketplaceAddons {
             ApplicableFn = "Test-ExasolVscodeApplicable"
             ReasonFn     = "Get-ExasolVscodeApplicableReason"
             SummaryFn    = "Get-ExasolVscodeSummary"
+            SystemPresentFn = "Test-ExasolVscodeSystemPresent"
             EnvVar      = "EXAKIT_EXASOL_VSCODE_VERSION"
             FallbackVar = "ExasolVscodeVersionFallback"
         },
@@ -3997,6 +4000,8 @@ function Get-ExakitMarketplaceAddons {
             ReasonFn     = "Get-JsonTablesApplicableReason"
             SummaryFn    = "Get-JsonTablesSummary"
             LogFn        = "Get-JsonTablesLogPath"
+            SystemPresentFn = "Get-JsonTablesSystemPresent"
+            LatestFn     = "Get-JsonTablesLatest"
             EnvVar      = "EXAKIT_JSON_TABLES_VERSION"
             FallbackVar = "JsonTablesVersionFallback"
         }
@@ -4243,6 +4248,19 @@ function Test-ExakitMarketplaceAddonInstalled {
 # the user already has.
 function Test-ExakitAddonSystemPresent {
     param([Parameter(Mandatory)][string]$Id)
+    # The module's own detector first, when the registry declares one: the
+    # generic probe below keys on the add-on ID as a command name, which is
+    # the wrong name often enough (json-tables installs exasol-json-tables,
+    # the scheduler's engine is exasol_scheduler, the VS Code extension is not
+    # a command at all) that Windows never saw a manual install and offered
+    # the user a tool they already had - or worse, adopted and later deleted
+    # one the kit never installed. Twin of _exakit_addon_system_present.
+    $addon = Get-ExakitMarketplaceAddon $Id
+    if ($addon -and $addon.PSObject.Properties["SystemPresentFn"] -and $addon.SystemPresentFn) {
+        if (Get-Command $addon.SystemPresentFn -ErrorAction SilentlyContinue) {
+            return [bool](& $addon.SystemPresentFn)
+        }
+    }
     $found = Get-Command $Id -ErrorAction SilentlyContinue
     if (-not $found -or -not $found.Source) { return $false }
     # The kit's own launcher on PATH is a kit install, not a system one.
@@ -5364,8 +5382,20 @@ function Get-ExakitComponentLatest {
         }
         default {
             # Marketplace add-ons declare their upstream in versions.json:
-            # repo -> a GitHub release, package -> PyPI. No per-add-on arm.
-            if (-not (Get-ExakitMarketplaceAddon $Component)) { return "" }
+            # repo -> a GitHub release, package -> PyPI. No per-add-on arm -
+            # but an add-on whose "latest" is neither of those answers for
+            # itself through the registry's LatestFn, exactly as the shell
+            # half dispatches. json-tables and the scheduler are the case this
+            # exists for: what is installable is what the kit's packaging
+            # workflow has already built and published, a stricter thing than
+            # what upstream tagged - without this, the Windows update check
+            # answered nothing for both and could never see them.
+            $addon = Get-ExakitMarketplaceAddon $Component
+            if (-not $addon) { return "" }
+            if ($addon.PSObject.Properties["LatestFn"] -and $addon.LatestFn -and
+                (Get-Command $addon.LatestFn -ErrorAction SilentlyContinue)) {
+                return ("" + (& $addon.LatestFn))
+            }
             $repo = Get-ExakitVersionsValue -Path "components.$Component.repo"
             if ($repo) { return (Get-ExakitLatestGithubRelease $repo) }
             $package = Get-ExakitVersionsValue -Path "components.$Component.package"

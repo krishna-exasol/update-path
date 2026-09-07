@@ -33,7 +33,22 @@ $script:DashServerVersion = if ($env:EXAKIT_DASH_SERVER_VERSION) { $env:EXAKIT_D
 $script:DashServerVenv = if ($env:EXAKIT_DASH_SERVER_VENV) { $env:EXAKIT_DASH_SERVER_VENV } else { Join-Path $script:ExakitHome "dash-server-venv" }
 $script:DashServerHome = if ($env:EXAKIT_DASH_SERVER_HOME) { $env:EXAKIT_DASH_SERVER_HOME } else { Join-Path $script:ExakitHome "dash-server" }
 $script:DashServerPort = if ($env:EXAKIT_DASH_SERVER_PORT) { $env:EXAKIT_DASH_SERVER_PORT } else { "5100" }
+$script:DashServerPortExplicit = [bool]$env:EXAKIT_DASH_SERVER_PORT
+$script:DashServerPortResolved = $false
 $script:DashServerProfile = if ($env:EXAKIT_DASH_SERVER_PROFILE) { $env:EXAKIT_DASH_SERVER_PROFILE } else { "starter-kit" }
+
+# Resolve-DashServerPort - the port the INSTALL recorded wins over this
+# module's default, exactly as the shell half has always resolved it
+# (_dash_server_resolve_port). Without this, an install on a non-default port
+# printed "recorded, so every command agrees" and then every later Windows
+# command talked to 5100 anyway. An explicit environment override still wins.
+function Resolve-DashServerPort {
+    if ($script:DashServerPortResolved) { return }
+    $script:DashServerPortResolved = $true
+    if ($script:DashServerPortExplicit) { return }
+    $recorded = "" + (Get-ExakitManifestValue "components.dash_server.port")
+    if ($recorded -match '^[0-9]+$') { $script:DashServerPort = $recorded }
+}
 
 function Get-DashServerVenvPython {
     return (Join-Path $script:DashServerVenv "Scripts\python.exe")
@@ -95,6 +110,7 @@ function Write-DashServerNotInstalled {
 }
 
 function Install-DashServer {
+    Resolve-DashServerPort
     # Resolve the advertised version here (env override -> policy ->
     # versions.json -> fallback): neither caller has one ready. The marketplace
     # path runs from the exakit CLI, where Resolve-ExakitInstallVersions has not
@@ -309,6 +325,7 @@ function Confirm-DashServerPort {
 }
 
 function Test-DashServer {
+    Resolve-DashServerPort
     $python = Get-DashServerVenvPython
     # Nothing to validate when the install did not get far enough: it is
     # soft-fail by design and has already explained itself.
@@ -540,6 +557,7 @@ function Write-DashServerUsagePanel {
 # Get-DashServerSummary - the one fact worth a place on the result line.
 # Optional registry hook (SummaryFn); twin of dash_server_summary.
 function Get-DashServerSummary {
+    Resolve-DashServerPort
     # 33 characters at a four-digit port. The cell truncates anything longer,
     # and its room is 33 in the PLAIN palette, whose tick is the four-character
     # "[ok]" rather than a one-character glyph.
@@ -605,6 +623,7 @@ function Test-DashServerRunning {
 # running | stopped | not installed. The HTTP probe is the truth: the process
 # may have been started by the Startup entry, by the user, or by exakit.
 function Get-DashServerStatus {
+    Resolve-DashServerPort
     if (-not (Test-Path (Get-DashServerLauncherPath))) { return "not installed" }
     if (Test-DashServerRunning) { return "running" }
     $foreign = Get-DashServerPortForeignDescription
@@ -634,6 +653,7 @@ function Get-DashServerProcessIds {
 # Bring it up in the background and wait until the control plane answers.
 # Idempotent: an already-running server is reported, not duplicated.
 function Start-DashServer {
+    Resolve-DashServerPort
     if (-not (Test-Path (Get-DashServerLauncherPath))) {
         Warn2 "dash-server is not installed - add it with: exakit marketplace"
         return $false
@@ -676,6 +696,7 @@ function Start-DashServer {
 
 # Stop every kit-managed dash-server process, bounded.
 function Stop-DashServer {
+    Resolve-DashServerPort
     $ids = Get-DashServerProcessIds
     if ($ids.Count -eq 0 -and -not (Test-DashServerHttpAnswers)) {
         Ok "dash-server is already stopped"
@@ -698,6 +719,7 @@ function Stop-DashServer {
 # What the boot entry runs. The launcher already bootstraps the database
 # profile, so this is simply it.
 function Get-DashServerAutostartCommand {
+    Resolve-DashServerPort
     return ('"{0}" --host 127.0.0.1 --port {1}' -f (Get-DashServerLauncherPath), $script:DashServerPort)
 }
 
@@ -705,6 +727,7 @@ function Get-DashServerAutostartCommand {
 # the instance state, the launcher, and the manifest record. -DryRun only
 # narrates the plan. Best-effort and idempotent. Twin of dash_server_uninstall.
 function Uninstall-DashServer {
+    Resolve-DashServerPort
     param([switch]$DryRun)
     # A running server holds its port and would outlive its own files.
     if (-not $DryRun) { [void](Stop-DashServer) }
@@ -734,6 +757,7 @@ function Uninstall-DashServer {
 # the repair command after a failed marketplace install. Asked for explicitly,
 # so a failure here IS a failure. Twin of dash_server_update.
 function Update-DashServer {
+    Resolve-DashServerPort
     $available = Get-ExakitComponentAvailable "dash-server"
     if (-not $available) { Fail "Could not resolve the advertised dash-server version." }
     $current = Get-DashServerInstalledVersion

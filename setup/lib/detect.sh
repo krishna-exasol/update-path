@@ -330,7 +330,14 @@ preflight_report() {
 
     # port
     if port_in_use "${EXAKIT_DB_PORT:-8563}"; then
-        _pf_note "Port ${EXAKIT_DB_PORT:-8563} is in use — fine if that is an existing local Exasol; otherwise stop the other application or set EXAKIT_DB_PORT"
+        # EXAKIT_DB_PORT only moves the CONTAINER deployments; the macOS
+        # deployment always binds 8563, so offering the variable there sends
+        # the reader to a knob that silently does nothing.
+        if [ "$(detect_os)" = "macos" ]; then
+            _pf_note "Port ${EXAKIT_DB_PORT:-8563} is in use — fine if that is an existing local Exasol (it is adopted); otherwise stop the other application (the macOS deployment needs 8563; EXAKIT_DB_PORT does not apply)"
+        else
+            _pf_note "Port ${EXAKIT_DB_PORT:-8563} is in use — fine if that is an existing local Exasol; otherwise stop the other application or set EXAKIT_DB_PORT"
+        fi
     else
         _pf_ok "Port ${EXAKIT_DB_PORT:-8563} is free"
     fi

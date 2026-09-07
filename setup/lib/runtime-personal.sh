@@ -60,6 +60,13 @@ personal_check_requirements() {
         fi
     fi
 
+    # A knob that does nothing must say so, not be silently ignored: the README
+    # and the preflight offer EXAKIT_DB_PORT for port conflicts, but only the
+    # container deployments honour it - the macOS deployment always binds 8563.
+    if [ -n "${EXAKIT_DB_PORT:-}" ] && [ "${EXAKIT_DB_PORT}" != "$EXAKIT_PERSONAL_PORT" ]; then
+        warn "EXAKIT_DB_PORT is ignored on macOS: the Exasol Personal deployment always uses port $EXAKIT_PERSONAL_PORT."
+    fi
+
     # Bare minimum: run, but say what to expect.
     if [ "$_ram" -lt "$EXAKIT_PERSONAL_COMFORT_RAM_GB" ]; then
         warn "Memory is at the bare minimum (${_ram} GB; comfortable: ${EXAKIT_PERSONAL_COMFORT_RAM_GB}+ GB) — the database will run, but expect slower queries and keep other heavy apps closed."
