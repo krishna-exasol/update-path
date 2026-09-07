@@ -116,6 +116,22 @@ if ($env:OS -notlike "*Windows*") {
     throw "This installer is for Windows. On macOS/Linux/WSL use install.sh."
 }
 
+# GROUP POLICY OUTRANKS -ExecutionPolicy Bypass, by design: on a machine where
+# MachinePolicy or UserPolicy pins the execution policy, the handoff below
+# (`powershell -ExecutionPolicy Bypass -File setup\...`) and every later
+# `exakit` (a .cmd shim built on the same flag) fail with "running scripts is
+# disabled" no matter what this process does. That is a fact about the machine,
+# so it is checked HERE, before anything is downloaded, with the real fix
+# named - not discovered at the last step with a generic scripts error.
+foreach ($gpoScope in @("MachinePolicy", "UserPolicy")) {
+    $gpoPolicy = "" + (Get-ExecutionPolicy -Scope $gpoScope -ErrorAction SilentlyContinue)
+    if ($gpoPolicy -and $gpoPolicy -notin @("Undefined", "Bypass", "Unrestricted", "RemoteSigned")) {
+        throw ("Group Policy pins this machine's PowerShell execution policy to '$gpoPolicy' ($gpoScope scope), " +
+            "which overrides -ExecutionPolicy Bypass - the kit's scripts cannot run here. " +
+            "Ask IT to allow local scripts (RemoteSigned) for your user, or use WSL instead: the WSL quickstart installs the same kit without touching Windows PowerShell.")
+    }
+}
+
 # Everything past this section writes to the machine: the download replaces
 # ~\.exasol-starter-kit\kit, and the setup script it hands off to opens a
 # logfile and writes the install manifest before it checks a single
@@ -368,16 +384,35 @@ $urls = @(
     "https://github.com/$Repo/archive/refs/heads/$Ref.zip",
     "https://github.com/$Repo/archive/refs/tags/$Ref.zip"
 )
+# HTTPS_PROXY is honoured HERE, not just documented: Invoke-WebRequest ignores
+# that environment variable (it uses the system proxy), so the remedy every
+# doc offered - "set $env:HTTPS_PROXY and re-run" - changed nothing on the one
+# path it was written for. When the variable is set, it is passed explicitly,
+# with the signed-in user's credentials for the 407-challenging proxies
+# corporate networks actually run.
+$webArgs = @{}
+if ($env:HTTPS_PROXY) {
+    $webArgs["Proxy"] = $env:HTTPS_PROXY
+    $webArgs["ProxyUseDefaultCredentials"] = $true
+}
 $fetched = $false
+$proxyDenied = $false
 foreach ($url in $urls) {
     try {
-        Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing -TimeoutSec 300
+        Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing -TimeoutSec 300 @webArgs
         $fetched = $true
         break
-    } catch { }
+    } catch {
+        if ("$_" -match "407") { $proxyDenied = $true }
+    }
 }
 if (-not $fetched) {
-    throw "Could not download the kit from github.com/$Repo ($Ref). Check your internet connection or proxy; if the repository is private, set `$env:GITHUB_TOKEN and re-run."
+    if ($proxyDenied) {
+        # A 407 is the PROXY refusing, not GitHub: name it, or the reader
+        # debugs their internet connection while the proxy wants credentials.
+        throw "The proxy refused the download (HTTP 407, authentication required). Sign in to your proxy or ask IT for its address, set `$env:HTTPS_PROXY, and re-run."
+    }
+    throw "Could not download the kit from github.com/$Repo ($Ref). Check your internet connection or proxy (set `$env:HTTPS_PROXY if you use one); if the repository is private, set `$env:GITHUB_TOKEN and re-run."
 }
 
 # The replacement kit is assembled beside the old one and swapped in only once
