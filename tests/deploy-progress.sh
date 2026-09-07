@@ -126,6 +126,34 @@ printf '%s\n' \
 check "a lower milestone never rewinds" "35" "$(cut -d'|' -f1 "$STATE")"
 check "...keeping its phase"          "Getting Exasol ready" "$(cut -d'|' -f5 "$STATE")"
 
+printf '\n== a silent launcher is noticed, not waited on forever ==\n'
+
+# THE HANG THIS PINS: the launcher re-attaches stdin to the terminal so a
+# first-run licence confirmation can read the keyboard - but the prompt text
+# arrives here without a newline, so it never leaves the pipe. The install sat
+# at 5%% forever with the question invisible. The collector's bounded read now
+# notices the silence, stops the bar, prints the tail and says how to act; a
+# launcher that then speaks again resumes on screen.
+printf '0|5|3|0|Preparing to deploy\n' > "$STATE"
+: > "$TAIL"; : > "$NOTICE"
+STALLED="$( { printf '{"msg":"validating presets"}\n'; sleep 6; printf '{"msg":"Completed deploying"}\n'; } | \
+    EXAKIT_PERSONAL_DEPLOY_STALL=3 EXAKIT_DEPLOY_LIVE=1 \
+    _personal_deploy_collect "$STATE" "$TAIL" "$NOTICE" 2>&1 )"
+has "the stall is announced"            "The launcher has said nothing" "$STALLED"
+has "the keyboard hint is given"        "Your keyboard is still connected" "$STALLED"
+has "the tail is shown"                 "last lines from the exasol launcher" "$STALLED"
+has "the escape hatch is named"         "Ctrl-C is safe" "$STALLED"
+has "a late milestone still lands"      "Deployed" "$STALLED"
+check "and the bar still completes"     "100" "$(cut -d'|' -f1 "$STATE")"
+
+# A launcher with no gaps must never see any of that.
+printf '0|5|3|0|Preparing to deploy\n' > "$STATE"
+: > "$TAIL"; : > "$NOTICE"
+QUICK="$(printf '{"msg":"validating presets"}\n{"msg":"Completed deploying"}\n' | \
+    EXAKIT_PERSONAL_DEPLOY_STALL=3 EXAKIT_DEPLOY_LIVE=1 \
+    _personal_deploy_collect "$STATE" "$TAIL" "$NOTICE" 2>&1)"
+check "a gapless stream stays silent"   "" "$QUICK"
+
 printf '\n== unknown output is harmless ==\n'
 
 printf '10|20|2|0|Preparing to deploy\n' > "$STATE"

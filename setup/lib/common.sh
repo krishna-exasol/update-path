@@ -2158,9 +2158,15 @@ exakit_run_bounded() {
         sleep 1
         _rb_waited=$((_rb_waited + 1))
     done
-    kill -TERM "$_rb_pid" 2>/dev/null
+    # The GROUP first, then the child: a probe captured with $( ) stays blocked
+    # until every process holding the pipe's write end exits, so killing only
+    # the direct child leaves its own children keeping the capture open. When
+    # the child leads no group of its own (non-interactive shells put it in
+    # the script's group, where a group kill must never land), the group kill
+    # is a no-op and the direct one still applies.
+    kill -TERM -- "-$_rb_pid" 2>/dev/null || kill -TERM "$_rb_pid" 2>/dev/null
     sleep 1
-    kill -KILL "$_rb_pid" 2>/dev/null
+    kill -KILL -- "-$_rb_pid" 2>/dev/null || kill -KILL "$_rb_pid" 2>/dev/null
     wait "$_rb_pid" 2>/dev/null
     return 124
 }
