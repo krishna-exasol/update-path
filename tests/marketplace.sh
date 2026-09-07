@@ -93,6 +93,7 @@ export EXAKIT_ABOUT_OFFLINE
 . "$ROOT/setup/lib/dash-server.sh"
 . "$ROOT/setup/lib/exasol-vscode.sh"
 . "$ROOT/setup/lib/json-tables.sh"
+. "$ROOT/setup/lib/exasol-scheduler.sh"
 
 # ...and its own port. The default 5100 is where a developer's REAL dash-server
 # listens, and the ownership probe would rightly call that a foreign process
@@ -113,7 +114,7 @@ cover_every_addon() {
 }
 
 echo "registry:"
-check "addons list carries every registered add-on" "dash-server exasol-vscode json-tables" \
+check "addons list carries every registered add-on" "dash-server exasol-scheduler exasol-vscode json-tables" \
     "$(exakit_marketplace_addons | cut -d'|' -f1 | tr '\n' ' ' | sed 's/ $//')"
 check "addon module is loaded" "yes" "$(exakit_marketplace_addon_available dash-server && echo yes || echo no)"
 check "component block" "components.dash-server" "$(_exakit_component_block dash-server)"
@@ -192,13 +193,15 @@ run_menu() ( # run_menu <env-answer> — echoes "installed:<ids>" + menu output
     exasol_vscode_validate() { return 0; }
     json_tables_install() { _CALLED="${_CALLED} json-tables"; return 0; }
     json_tables_validate() { return 0; }
+    exasol_scheduler_install() { _CALLED="${_CALLED} exasol-scheduler"; return 0; }
+    exasol_scheduler_validate() { return 0; }
     EXAKIT_MARKETPLACE_ADDONS="$1"
     exakit_marketplace_menu >/dev/null 2>&1
     printf 'rc=%s called=%s' "$?" "${_CALLED# }"
 )
 check "none installs nothing" "rc=0 called=" "$(run_menu none)"
 check "naming one addon installs only it" "rc=0 called=dash-server" "$(run_menu dash-server)"
-check "all installs every pending addon" "rc=0 called=dash-server exasol-vscode json-tables" "$(run_menu all)"
+check "all installs every pending addon" "rc=0 called=dash-server exasol-scheduler exasol-vscode json-tables" "$(run_menu all)"
 _unknown_out="$( (run_menu not-a-tool) 2>&1 || true)"
 check "an unknown id refuses" "yes" "$( (EXAKIT_MARKETPLACE_ADDONS=not-a-tool exakit_marketplace_menu >/dev/null 2>&1); [ $? -ne 0 ] && echo yes || echo no )"
 # An installer that fails must not report success.
@@ -1364,6 +1367,42 @@ check "with nothing advertised the module's fallback answers, not a guess" "$EXA
     exakit_versions_value() { return 1; }
     exakit_component_latest json-tables 2>/dev/null
 ) )"
+echo "the scheduler's give-up state is visible, not a bare stopped:"
+# THE BUG CLASS: the launcher stops after five rapid engine failures - correct -
+# but the only trace was a log line nobody whose jobs just stopped was reading.
+# The marker it now writes is what turns `exakit status` from "stopped" (reads
+# like a choice someone made) into the reason plus the two commands that act on
+# it. A deliberate restart clears the marker: a fresh start is a fresh chance.
+_SG_HOME="$WORK/sched-giveup"
+_sg_out="$( (
+    EXAKIT_EXASOL_SCHEDULER_HOME="$_SG_HOME"
+    EXAKIT_EXASOL_SCHEDULER_BIN="$_SG_HOME/launcher"
+    mkdir -p "$_SG_HOME"
+    : > "$_SG_HOME/launcher"; chmod 755 "$_SG_HOME/launcher"
+    _exasol_scheduler_pids() { printf ''; }
+    printf 'gave up after 5 rapid failures (last exit 7) at earlier\n' > "$_SG_HOME/gave-up"
+    exasol_scheduler_status
+) )"
+has "a gave-up scheduler says so" "gave up after 5 rapid failures" "$_sg_out"
+has "and names the diagnosis" "exakit logs exasol-scheduler" "$_sg_out"
+check "a start clears the give-up state" "cleared" "$( (
+    EXAKIT_EXASOL_SCHEDULER_HOME="$_SG_HOME"
+    EXAKIT_EXASOL_SCHEDULER_BIN="$_SG_HOME/launcher"
+    printf 'gave up\n' > "$_SG_HOME/gave-up"
+    _exasol_scheduler_pids() { printf ''; }
+    info() { :; }; ok() { :; }; warn() { :; }
+    nohup() { :; }
+    exasol_scheduler_start >/dev/null 2>&1 || true
+    [ -f "$_SG_HOME/gave-up" ] && echo present || echo cleared
+) )"
+check "an ordinary stop stays a plain stopped" "stopped" "$( (
+    EXAKIT_EXASOL_SCHEDULER_HOME="$_SG_HOME"
+    EXAKIT_EXASOL_SCHEDULER_BIN="$_SG_HOME/launcher"
+    rm -f "$_SG_HOME/gave-up"
+    _exasol_scheduler_pids() { printf ''; }
+    exasol_scheduler_status
+) )"
+
 echo "data-load's default row when every bundled dataset is in:"
 # THE BUG: with nothing left to load from the bundle, the pre-selected row was
 # the final "Skip" one -- so Enter did nothing, on the one
