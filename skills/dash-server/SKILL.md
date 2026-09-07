@@ -75,7 +75,7 @@ dash-server          # the launcher, starts it directly
 exakit start         # the database AND every installed service, including this
 exakit stop
 exakit status        # running | stopped | not installed
-exakit autostart on  # bring it back after a reboot
+exakit autostart     # asks, then flips it; EXAKIT_AUTOSTART_CHANGE=1 pre-answers
 exakit logs dash-server
 ```
 

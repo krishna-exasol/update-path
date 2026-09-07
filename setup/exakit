@@ -135,14 +135,14 @@ _require_install() {
     exakit_init_logging 2>/dev/null || true
     if [ ! -f "$EXAKIT_MANIFEST" ]; then
         if [ "$_ri_json" = "1" ]; then
-            printf '{"ok": false, "installed": false, "error": "no installation found", "remedy": "run the installer"}\n'
+            printf '{"ok": false, "installed": false, "error": "no installation found", "remedy": "%s"}\n' "$(exakit_install_command)"
             exit 4
         fi
         die "No installation found. Run the installer first."
     fi
     if [ -z "$(_runtime_type)" ]; then
         if [ "$_ri_json" = "1" ]; then
-            printf '{"ok": false, "installed": true, "error": "no runtime recorded in the manifest yet", "remedy": "re-run the installer (it resumes at the unfinished step)"}\n'
+            printf '{"ok": false, "installed": true, "error": "no runtime recorded in the manifest yet", "remedy": "%s", "remedy_hint": "the installer resumes at the unfinished step"}\n' "$(exakit_install_command)"
             exit 3
         fi
         die "No runtime recorded in the manifest yet."
@@ -163,8 +163,8 @@ _not_installed_answer() {
         # cmd_mcp_doctor). They used to differ per state with no key in common,
         # so a parser that read .status off the healthy shape hit a KeyError on
         # exactly the two states worth branching on.
-        printf '{"installed": false, "status": "not installed", "manifest": "%s", "reason": "no install record", "remedy": "run the installer"}\n' \
-            "$EXAKIT_MANIFEST"
+        printf '{"installed": false, "status": "not installed", "manifest": "%s", "reason": "no install record", "remedy": "%s"}\n' \
+            "$EXAKIT_MANIFEST" "$(exakit_install_command)"
     else
         printf 'Not installed (no manifest at %s). Run the installer first.\n' "$EXAKIT_MANIFEST" >&2
     fi
@@ -305,9 +305,9 @@ cmd_status() {
             _cs_note_at="$(sed -n '2p' "$EXAKIT_HOME/.last-failure" 2>/dev/null || true)"
         fi
         run_python - "$(manifest_get kit_level 2>/dev/null)" "${_type:-}" "$_cs_db"             "${_cs_autostart:-false}" "$_cs_datasets" "${_cs_pyx:-}" "$EXAKIT_MANIFEST"             "$(manifest_get steps_completed 2>/dev/null)" "$_cs_services" "$_cs_note" "$_cs_note_at" \
-            "$_cs_installing" "$_cs_step" "$_cs_urls" <<'EXAKIT_SJ_PY'
+            "$_cs_installing" "$_cs_step" "$_cs_urls" "$(exakit_install_command)" <<'EXAKIT_SJ_PY'
 import json, sys
-kit, rtype, db, autostart, datasets, pyx, manifest, steps, services, note, note_at, installing, step, urls = sys.argv[1:15]
+kit, rtype, db, autostart, datasets, pyx, manifest, steps, services, note, note_at, installing, step, urls, install_cmd = sys.argv[1:16]
 installing = installing == "1"
 try:
     steps_list = json.loads(steps) if steps else []
@@ -326,8 +326,12 @@ for line in urls.splitlines():
             umap[key] = value
 running = db.startswith("running")
 # Remedies are additive: an agent should never have to infer the fix from a
-# null, and should never have to parse the human screen to find one.
+# null, and should never have to parse the human screen to find one. AND EVERY
+# REMEDY IS A RUNNABLE COMMAND - AGENTS.md says "when remedy is not null, run
+# it", so an English sentence at that key breaks the contract it documents.
+# The prose that used to live there moves to remedy_hints, same keys.
 remedies = {}
+remedy_hints = {}
 if not pyx:
     remedies["pyexasol"] = "exakit update"
 if not running:
@@ -335,37 +339,45 @@ if not running:
     # identically every time, which is how an agent ends up looping on it. The
     # runtime reports that state distinctly so the remedy can differ. And with
     # NO runtime at all, "exakit start" has nothing to start - only the
-    # installer can create one, so that is the remedy an agent is handed.
+    # installer can create one, so its command is the remedy an agent is handed.
     if db.startswith("interrupted"):
         remedies["database"] = "exakit repair-runtime"
     elif db.startswith("not installed"):
-        remedies["database"] = "re-run the installer (it resumes at the unfinished step)"
+        remedies["database"] = install_cmd
+        remedy_hints["database"] = "no database is deployed; the installer resumes at the unfinished step"
     else:
         remedies["database"] = "exakit start"
 if db.startswith("conflict"):
     # Something else is on the SQL port. `exakit start` cannot help until it is gone.
-    remedies["database"] = "another process is listening on the database port — stop it, then: exakit start"
+    remedies["database"] = "exakit start"
+    remedy_hints["database"] = "another process is listening on the database port — stop it first, then run the remedy"
 if installing:
-    remedies["install"] = "the installer is still running (step: %s) — poll exakit status --json until status is running" % (step or "unknown")
+    remedies["install"] = "exakit status --json"
+    remedy_hints["install"] = "the installer is still running (step: %s) — poll the remedy until status is running" % (step or "unknown")
 # A step the installer never finished. With the installer gone (no live lock)
 # the manifest's steps_completed is the only trace, and `remedies` was empty
 # for it: a session that picked the machine up after a crashed install saw
 # "running" and nothing else. The map is documented as "component -> the exact
 # repair command", so each unfinished step names one. Order is the installer's.
+# None means "the installer's own command" - runnable, resolved below - with
+# the resume note as the hint rather than inside the remedy.
 STEP_REMEDIES = [
-    ("launcher", "re-run the installer (it resumes at the unfinished step)"),
-    ("runtime", "re-run the installer (it resumes at the unfinished step)"),
-    ("exapump", "re-run the installer (it resumes at the unfinished step)"),
+    ("launcher", None),
+    ("runtime", None),
+    ("exapump", None),
     ("mcp", "exakit mcp-setup"),
     ("pyexasol", "exakit update"),
-    ("exakit_helper", "re-run the installer (it resumes at the unfinished step)"),
+    ("exakit_helper", None),
 ]
 steps_missing = []
 if not installing:
     for step_id, fix in STEP_REMEDIES:
         if step_id not in steps_list:
             steps_missing.append(step_id)
-            remedies.setdefault(step_id, fix)
+            if step_id not in remedies:
+                remedies[step_id] = fix or install_cmd
+                if fix is None:
+                    remedy_hints[step_id] = "this install step never finished; the installer resumes at it"
 # "installed": true beside "status": "not installed" was one object
 # contradicting itself: `installed` answers for the KIT, the runtime string
 # answers for the DATABASE, and the runtime's phrasing leaked into the
@@ -400,6 +412,9 @@ payload = {
     "steps_missing": steps_missing,
     "pyexasol": pyx or None,
     "remedies": remedies,
+    # Prose that explains a remedy, same keys: the remedy itself stays a
+    # runnable command, per the AGENTS.md contract.
+    "remedy_hints": remedy_hints,
     # The single most useful remedy, hoisted so it sits at the same key in every
     # state a state query can report. `remedies` keeps the full per-component map.
     # An unfinished step ranks below a stopped database (start it first) and
