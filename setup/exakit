@@ -1228,8 +1228,12 @@ cmd_info_json() {
     # .status the way it was told hit a KeyError on exactly the state worth
     # branching on. The record is the manifest, complete, plus those three keys.
     if exakit_runtime_is_running; then _ij_running=1; else _ij_running=0; fi
+    # The skill set's advertised version, from the CACHED versions document
+    # (no network): info says when `exakit update` has a newer set to fetch,
+    # the way `exakit version` does, without becoming a network call.
+    _ij_skills_want="$(exakit_versions_value components.skills.version 2>/dev/null || true)"
     if exakit_can_run_python; then
-        run_python - "$EXAKIT_MANIFEST" "$_ij_running" <<'EXAKIT_IJ_PY'
+        run_python - "$EXAKIT_MANIFEST" "$_ij_running" "$_ij_skills_want" <<'EXAKIT_IJ_PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     doc = json.load(handle)
@@ -1237,6 +1241,14 @@ running = sys.argv[2] == "1"
 doc["installed"] = True
 doc["status"] = "running" if running else "database not running"
 doc["remedy"] = None if running else "exakit start"
+skills_have = ((doc.get("components") or {}).get("skills") or {}).get("version")
+skills_want = sys.argv[3] or None
+doc["skills"] = {
+    "installed_version": skills_have,
+    "advertised_version": skills_want,
+    "status": "update_pending" if (skills_have and skills_want and skills_have != skills_want) else "current",
+    "next": "exakit update" if (skills_have and skills_want and skills_have != skills_want) else None,
+}
 print(json.dumps(doc, indent=2))
 EXAKIT_IJ_PY
     else

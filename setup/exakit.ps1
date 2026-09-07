@@ -2352,6 +2352,17 @@ function Invoke-CmdInfoJson {
         }
         $doc | Add-Member -NotePropertyName "status" -NotePropertyValue $statusText -Force
         $doc | Add-Member -NotePropertyName "remedy" -NotePropertyValue $remedyText -Force
+        # The skill set's verdict, from the manifest and the cached versions
+        # document (no network). Twin of the skills block in cmd_info_json.
+        $ijHave = Get-ExakitManifestValue "components.skills.version"
+        $ijWant = Get-ExakitVersionsValue -Path "components.skills.version"
+        $ijPending = ($ijHave -and $ijWant -and ("$ijHave" -ne "$ijWant"))
+        $doc | Add-Member -NotePropertyName "skills" -NotePropertyValue ([ordered]@{
+            installed_version = $(if ($ijHave) { "$ijHave" } else { $null })
+            advertised_version = $(if ($ijWant) { "$ijWant" } else { $null })
+            status = $(if ($ijPending) { "update_pending" } else { "current" })
+            next = $(if ($ijPending) { "exakit update" } else { $null })
+        }) -Force
         Write-Output ($doc | ConvertTo-Json -Depth 8)
     } catch {
         Write-Output $raw.TrimEnd("`r", "`n")
