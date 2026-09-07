@@ -3425,7 +3425,7 @@ function Set-ExakitReadonlyAllowlist {
     # docs recommend.
     $deny = @($prefixes | ForEach-Object { "Bash($_ uninstall`:*)" })
     $deny += "PowerShell(exakit uninstall`:*)"
-    $dir = Join-Path $HOME ".claude"
+    $dir = Join-Path (Get-ExakitAgentHome) ".claude"
     $path = Join-Path $dir "settings.json"
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $doc = $null
@@ -3491,7 +3491,7 @@ function Remove-ExakitReadonlyAllowlist {
     $ours += "PowerShell(exakit skills)"
     $ours += "PowerShell(exakit skills --json)"
     $ours += "mcp__exasol"
-    $path = Join-Path (Join-Path $HOME ".claude") "settings.json"
+    $path = Join-Path (Join-Path (Get-ExakitAgentHome) ".claude") "settings.json"
     if (-not (Test-Path $path)) { return "REMOVED 0" }
     try { $doc = Get-Content -Raw $path | ConvertFrom-Json } catch { return "SKIP unreadable" }
     if ($null -eq $doc -or -not $doc.PSObject.Properties["permissions"]) { return "REMOVED 0" }
@@ -3510,9 +3510,20 @@ function Remove-ExakitReadonlyAllowlist {
     return "REMOVED $removed"
 }
 
+# Get-ExakitAgentHome - the home directory AI agents resolve "~" from. On
+# Windows that is USERPROFILE: a PowerShell $HOME redirected to a domain share
+# is NOT where Claude Code or Codex look, so anything written for an agent
+# under $HOME lands where no agent ever reads. Every agent-facing path below
+# builds on this. (WIN-04's worst casualties: the skills and the allowlist.)
+function Get-ExakitAgentHome {
+    if ($env:USERPROFILE) { return $env:USERPROFILE }
+    return $HOME
+}
+
 # Get-ExakitSkillRoots - the per-user discovery folders CLI agents read.
 function Get-ExakitSkillRoots {
-    return @((Join-Path $HOME ".claude\skills"), (Join-Path $HOME ".agents\skills"))
+    $agentHome = Get-ExakitAgentHome
+    return @((Join-Path $agentHome ".claude\skills"), (Join-Path $agentHome ".agents\skills"))
 }
 
 function Get-ExakitSkillsDir {

@@ -101,6 +101,19 @@ print('bare ok' if 'Bash(exakit status:*)' in allow else 'bare MISSING',
       '| deny all 3' if len([d for d in deny if 'uninstall' in d]) == 3 else '| deny ONLY %d' % len([d for d in deny if 'uninstall' in d]))")"
 check "and the PowerShell twin lists the same spellings" "yes" \
     "$(grep -q '\$prefixes = @("exakit", "~/.local/bin/exakit"' "$ROOT/setup/lib/exakit-common.ps1" && echo yes || echo no)"
+# WINDOWS HOME RESOLUTION: install.ps1 used $HOME while exakit resolves from
+# USERPROFILE, so a domain machine with a redirected home installed into one
+# tree and looked in another - a successful install reported "not installed"
+# and re-running never converged. And everything written FOR AN AGENT (skills,
+# the ~/.claude allowlist) must build on the home agents resolve "~" from,
+# which on Windows is USERPROFILE, never a redirected $HOME.
+_ps_install="$(cat "$ROOT/install.ps1")"
+_ps_common="$(cat "$ROOT/setup/lib/exakit-common.ps1")"
+has "install.ps1 resolves its home like exakit does" "function Get-ExakitInstallHomeBase" "$_ps_install"
+has "...and exports the result for the setup run" '$env:EXAKIT_HOME = $ExakitHome' "$_ps_install"
+has "agent-facing paths have one resolver" "function Get-ExakitAgentHome" "$_ps_common"
+check "no agent-facing path builds on raw \$HOME" "0" \
+    "$(printf '%s\n' "$_ps_common" | grep -c 'Join-Path \$HOME "\.claude\|Join-Path \$HOME "\.agents')"
 # exapump sql must NEVER be pre-approved: that profile is the admin connection,
 # and auto-allowing it is exactly the trust model the kit sells being switched off.
 check "exapump sql is still gated" "gated" "$(python3 -c "
