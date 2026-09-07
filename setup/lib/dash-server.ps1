@@ -11,7 +11,9 @@
 #   - Pure-Python package with a dash-server console script; releases carry no
 #     prebuilt binaries, so the install is `uv pip install` of the tag's source
 #     tarball into a dedicated venv under the kit home - the same tag-pinned,
-#     package-manager-verified posture as the mcp and pyexasol components.
+#     tag-pinned posture as mcp and pyexasol - but with NO digest
+#     verification: the release publishes no digest for the tarball, unlike
+#     the binary add-ons.
 #   - Control plane: 127.0.0.1:5100 by default (env DASH_SERVER_HOST/PORT).
 #   - Exasol profile bootstrap at startup via DASH_SERVER_EXASOL_* env vars;
 #     the launcher below feeds it the kit's local database.

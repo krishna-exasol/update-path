@@ -898,7 +898,11 @@ printf '{\n  "runtime": {\n    "type": "nano"\n  }\n}\n' > "$_jc/manifest.json"
 # EXAKIT_BIN_DIR must be sandboxed too: exapump.sh derives its binary path
 # from it at load time, so leaving it at the default finds the developer's
 # real exapump and runs a real query.
-_jc_nx="$(EXAKIT_HOME="$_jc" EXAKIT_BIN_DIR="$_jc/bin" PATH="/usr/bin:/bin" bash "$ROOT/setup/exakit" sql --json 'SELECT 1' 2>/dev/null)"
+# The stripped PATH must starve the test of EXAPUMP, not of Python: hand the
+# real uv through so manifest reads keep working on a Mac whose system
+# python3 is below the kit's floor. (On CI the system python suffices and
+# the variable is simply empty.)
+_jc_nx="$(EXAKIT_HOME="$_jc" EXAKIT_BIN_DIR="$_jc/bin" EXAKIT_UV_BIN="$(command -v uv 2>/dev/null || true)" PATH="/usr/bin:/bin" bash "$ROOT/setup/exakit" sql --json 'SELECT 1' 2>/dev/null)"
 has "a missing exapump is a real error, not bash noise" '"error": "exapump (the SQL client) is not installed"' "$_jc_nx"
 has "...with a runnable remedy" '"remedy": "exakit update"' "$_jc_nx"
 
@@ -951,6 +955,46 @@ check "no skill advertises 'exakit autostart on'" "0" \
 check "...and no help document either" "0" \
     "$(grep -rl 'exakit autostart on' "$ROOT/setup/help" 2>/dev/null | wc -l | tr -d ' ')"
 has "dash-server declares its url hook" 'dash_server_url()' "$(cat "$ROOT/setup/lib/dash-server.sh")"
+
+echo
+echo "the lifecycle keeps its promises on the unhappy paths:"
+# ADD-04: uninstalling one add-on removes its boot entry too - left behind,
+# launchd/systemd fired a launcher that no longer exists on every login.
+has "add-on uninstall retires the boot entry" '_exakit_autostart_unregister "$_uc_key"' \
+    "$(cat "$ROOT/setup/lib/common.sh")"
+has "...and on Windows too" 'Unregister-ExakitAutostart -Id $Key' "$(cat "$ROOT/setup/exakit.ps1")"
+# AGK-07: the uv bootstrap runs lazily from INSIDE a --json answer; its
+# narration must never share stdout with the JSON object.
+check "uv bootstrap narration goes to stderr" "4" \
+    "$(sed -n '/^exakit_ensure_uv()/,/^}/p' "$ROOT/setup/lib/common.sh" | grep -c '>&2$')"
+# MAC-05: adopting or reusing a deployment records the version ON DISK, never
+# the advertised one.
+has "the manifest records the deployed version first" 'personal_deployed_version 2>/dev/null' \
+    "$(sed -n '/^personal_record_manifest()/,/^}/p' "$ROOT/setup/lib/runtime-personal.sh")"
+# CPY-16: the read-only guardrail speaks to whoever is reading, with an action.
+lacks "the guardrail no longer talks past the human" "say so and let the user decide" \
+    "$(cat "$ROOT/setup/lib/common.sh" "$ROOT/setup/lib/exakit-common.ps1")"
+has "...and names the deliberate write path" "exakit sql --write" \
+    "$(sed -n '/insufficient privileges/,+8p' "$ROOT/setup/lib/common.sh")"
+# SAY-08: the documented Personal major-upgrade route is accepted by the
+# option guard instead of being a phantom.
+_su="$WORK/say08"; mkdir -p "$_su"
+printf '{\n  "runtime": {\n    "type": "personal"\n  }\n}\n' > "$_su/manifest.json"
+_su_out="$(EXAKIT_HOME="$_su" bash "$ROOT/setup/exakit" update runtime --plan 2>&1)"
+lacks "update runtime --plan is not refused" "Unknown option" "$_su_out"
+# AGK-02: a DEAD installer answers with installing:false, the step it died at,
+# and remedies.install naming the re-run - the exact shape AGENTS.md promises.
+printf '{\n  "runtime": {\n    "type": "nano"\n  },\n  "install": {\n    "current_step": "mcp"\n  }\n}\n' > "$_su/manifest.json"
+_su_dead="$(EXAKIT_HOME="$_su" bash "$ROOT/setup/exakit" status --json 2>/dev/null)"
+check "dead installer keeps its step and remedy" "False|mcp|yes" "$(printf '%s' "$_su_dead" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print('%s|%s|%s' % (d['installing'], d['install_step'],
+                    'yes' if d['remedies'].get('install') else 'no'))")"
+# CPY-05: a panel never wraps what a capture will grep - the width cap applies
+# only where a terminal is rendering.
+has "the panel width cap is tty-gated" '[ -t 1 ]' \
+    "$(sed -n '/^ui_panel_end()/,/^}/p' "$ROOT/setup/lib/ui.sh")"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

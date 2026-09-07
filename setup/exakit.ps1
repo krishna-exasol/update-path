@@ -1220,6 +1220,9 @@ function Invoke-ExakitUninstallComponent {
                 # ...and the skills it owns go with it. Here rather than in the
                 # module, so every add-on gets it without writing a line.
                 try { Remove-ExakitAddonSkills $Key } catch { }
+                # ...and so does its BOOT ENTRY - left behind, it kept firing a
+                # launcher that no longer exists on every login, forever.
+                try { Unregister-ExakitAutostart -Id $Key } catch { }
             } else {
                 Warn2 "The $Key module carries no uninstall - update the kit: exakit update"
             }

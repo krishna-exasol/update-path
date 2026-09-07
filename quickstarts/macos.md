@@ -1,6 +1,6 @@
 # Quickstart: macOS
 
-Gets you from a bare Mac to a local Exasol database with an AI assistant connected. On macOS the database runs natively. No Docker needed.
+Gets you from a bare Mac to a local Exasol database with an AI assistant connected. On macOS the database runs in a lightweight VM that Exasol Personal manages for you — no Docker, and nothing for you to configure.
 
 ## What you need
 
@@ -67,7 +67,13 @@ exakit update --yes    # unattended: applies a waiting database update without a
 A waiting database update is offered inline — `Stop the database and update the
 runtime now? [y/N]` — and `y` runs the whole sequence for you. A **major** Exasol
 Personal version is never started that way: it is a data migration, so it keeps
-the backup-gated `--plan` / `--backup` / `--apply` route.
+the backup-gated route, run one step at a time:
+
+```bash
+exakit update runtime --plan     # what the migration involves, changes nothing
+exakit update runtime --backup   # take the backup the migration is gated on
+exakit update runtime --apply    # perform the migration
+```
 
 Full detail: [Staying up to date](../README.md#staying-up-to-date).
 

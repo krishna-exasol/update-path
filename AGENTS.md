@@ -73,7 +73,8 @@ Version and update behaviour (all optional, sensible defaults):
 | `EXAKIT_VERSIONS_TTL=86400` | Seconds before the cached copy is refreshed. `0` fetches every time |
 | `EXAKIT_<COMPONENT>_VERSION=...` | Pin one component by hand: `EXAKIT_EXAPUMP_VERSION`, `EXAKIT_MCP_VERSION`, `EXAKIT_PYEXASOL_VERSION`, `EXAKIT_PERSONAL_VERSION`, `EXAKIT_NANO_TAG`. Outranks the manifest, on install **and** on update |
 | `EXAKIT_CONFIRM_RUNTIME_UPDATE=1` | Pre-answer "yes, you may stop the database and recreate the container". Covers both entry points: it skips the confirmation in `exakit update`, and it opts an unattended `exakit update` into the runtime change it would otherwise defer (`exakit update --yes` does the same for one run). `=0` is a deliberate "no" and outranks the prompt |
-| `EXAKIT_NO_UPDATE_NOTICE=1` | Never print the once-a-day update notice after other commands |
+| `EXAKIT_NO_UPDATE_NOTICE=1` | Never print the pending-update notice after other commands. Unset, the notice appears after **every** command while any update is pending |
+| `EXAKIT_NOTICE_INTERVAL=86400` | Throttle that notice to at most one per this many seconds (`86400` = once a day). Default `0`: every command |
 
 Example:
 
