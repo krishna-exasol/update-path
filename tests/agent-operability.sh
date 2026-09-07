@@ -51,7 +51,10 @@ has "and the loaded datasets" '"tpch"' "$_sj"
 # panel row says so.
 has "the human screen names the datasets too" "tpch" \
     "$(EXAKIT_HOME="$WORK/stopped" bash "$ROOT/setup/exakit" status 2>/dev/null)"
-has "prose names the fix" "exakit start" "$(EXAKIT_HOME="$WORK/stopped" bash "$ROOT/setup/exakit" status 2>/dev/null | tail -1)"
+# The fixture's container does not exist, so there is no runtime to start:
+# "exakit start" was the pre-runtime remedy bug this suite used to PIN as
+# correct (the audit's AGK-18). The fix an agent can act on is the installer.
+has "prose names the fix" "re-run the installer" "$(EXAKIT_HOME="$WORK/stopped" bash "$ROOT/setup/exakit" status 2>/dev/null | tail -1)"
 # 2, not 1: bad input has its own code across the CLI now (the same one an
 # unknown subcommand uses), so an agent can tell "I typed it wrong" from "the
 # command ran and failed". It also records no failure note — see the reject
@@ -250,7 +253,10 @@ echo
 echo "the JSON carries the remedy the prose already had:"
 _rj="$(EXAKIT_HOME="$WORK/stopped" bash "$ROOT/setup/exakit" status --json 2>/dev/null)"
 has "status --json has a remedies map" '"remedies"' "$_rj"
-has "a stopped database names exakit start" 'exakit start' "$_rj"
+# A missing runtime (this fixture's container does not exist) is repaired by
+# the installer; a merely STOPPED one still answers "exakit start" - see the
+# remedy arms in the status heredoc.
+has "a missing runtime names the installer" 're-run the installer' "$_rj"
 has "a missing pyexasol names its repair" 'exakit update' "$_rj"
 has "status --json exposes last_failure" '"last_failure"' "$_rj"
 
@@ -871,6 +877,58 @@ has "...and its twin"                 '$env:EXAKIT_REUSE_DB -eq "0" -and (Test-N
 # database the repair was called to destroy.
 has "nano drops the data volume as well" 'volume" "rm' "$(cat "$ROOT/setup/lib/nano.ps1")"
 has "...on the shell side too" 'volume rm "$EXAKIT_NANO_VOLUME"' "$(cat "$ROOT/setup/lib/runtime-nano.sh")"
+
+echo
+echo "the JSON contract holds on the unhappy paths too:"
+# sql --json used to leave stdout EMPTY when the kit was not installed (a
+# human error card on stderr, exit 1 where the contract says 4), and to hand
+# the parser bash's own "No such file or directory" line-number noise when
+# exapump was missing (exit 127).
+_jc="$WORK/jc"; mkdir -p "$_jc"
+_jc_out="$(EXAKIT_HOME="$_jc" bash "$ROOT/setup/exakit" sql --json 'SELECT 1' 2>/dev/null)"
+check "sql --json answers JSON when not installed" "yes" \
+    "$(printf '%s' "$_jc_out" | python3 -m json.tool >/dev/null 2>&1 && echo yes || echo no)"
+has "and says why, with the remedy" '"remedy": "run the installer"' "$_jc_out"
+check "with the not-installed exit code" "4" \
+    "$(EXAKIT_HOME="$_jc" bash "$ROOT/setup/exakit" sql --json 'SELECT 1' >/dev/null 2>&1; echo $?)"
+printf '{\n  "runtime": {\n    "type": "nano"\n  }\n}\n' > "$_jc/manifest.json"
+# EXAKIT_BIN_DIR must be sandboxed too: exapump.sh derives its binary path
+# from it at load time, so leaving it at the default finds the developer's
+# real exapump and runs a real query.
+_jc_nx="$(EXAKIT_HOME="$_jc" EXAKIT_BIN_DIR="$_jc/bin" PATH="/usr/bin:/bin" bash "$ROOT/setup/exakit" sql --json 'SELECT 1' 2>/dev/null)"
+has "a missing exapump is a real error, not bash noise" '"error": "exapump (the SQL client) is not installed"' "$_jc_nx"
+has "...with a runnable remedy" '"remedy": "exakit update"' "$_jc_nx"
+
+# version --json: `status` is a fixed vocabulary a parser can switch on; the
+# action a human would take moved to a per-row runnable `remedy`. An add-on
+# row used to carry the literal command "exakit marketplace" AS its status.
+_jc_ver="$(EXAKIT_HOME="$_jc" bash "$ROOT/setup/exakit" version --json 2>/dev/null)"
+check "no component status is a shell command" "0" \
+    "$(printf '%s' "$_jc_ver" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print(sum(1 for c in d['components'] if c['status'].startswith('exakit ')))")"
+check "an uninstalled add-on reads as available, remedy runnable" "available|exakit marketplace json-tables" \
+    "$(printf '%s' "$_jc_ver" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+row = next(c for c in d['components'] if c['component'] == 'json-tables')
+print('%s|%s' % (row['status'], row['remedy']))")"
+
+# status --json: 'installed: true' beside 'status: not installed' was one
+# object contradicting itself; and a state query must never write the
+# .last-failure note it reports.
+EXAKIT_SH_JC="$(cat "$ROOT/setup/exakit")"
+has "the kit-level status says no database, not 'not installed'" 'top_status = "no database"' "$EXAKIT_SH_JC"
+has "...with the installer as the remedy, never exakit start" \
+    '"re-run the installer (it resumes at the unfinished step)"' "$EXAKIT_SH_JC"
+has "state queries raise the read-only flag" 'export EXAKIT_READONLY_QUERY=1' "$EXAKIT_SH_JC"
+check "and the note writer honours it" "kept-clean" "$( (
+    EXAKIT_READONLY_QUERY=1 exakit_note_failure "should never land" 2>/dev/null
+    [ -f "$(exakit_failure_note_file)" ] && echo WROTE || echo kept-clean
+) )"
+has "status --json carries per-service urls" '"urls": umap' "$EXAKIT_SH_JC"
+has "dash-server declares its url hook" 'dash_server_url()' "$(cat "$ROOT/setup/lib/dash-server.sh")"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]

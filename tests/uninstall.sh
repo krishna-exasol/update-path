@@ -147,26 +147,27 @@ check "the Windows twin hands back the irm form" "1" "$_psc"
 _psbad="$(grep -c 'Install it again any time: curl' "$ROOT/setup/exakit.ps1" 2>/dev/null; true)"
 check "and Windows is never told to curl into sh" "0" "$_psbad"
 
-# The menu is the WHOLE interface for uninstall: the argument parser takes flags
-# only. A hint above the menu used to name a by-name form -- `exakit uninstall
-# <database|mcp_configs|...>` -- and every one of those forms answers "Unknown
-# option", so the kit documented, one line above the menu, a command that could
-# only fail. Asserted on BEHAVIOUR rather than on the removed wording: a guard
-# that greps for the old string passes the day the same promise is written in
-# different words.
+# The by-name form accepts exactly the MARKETPLACE ADD-ON ids (the selective
+# removal an agent or script can call) and rejects every other piece by name:
+# internal component keys like `database` or `mcp_configs` stay menu-only, and
+# a rejection must say so rather than "Unknown option" — the id is not an
+# option, it is a target uninstall does not take.
 echo
-echo "uninstall advertises only what it accepts:"
-for _c in database mcp_configs skills exapump pyexasol dash-server; do
+echo "uninstall accepts add-on ids and rejects internal piece names:"
+for _c in database mcp_configs skills exapump pyexasol; do
     _uout="$(/bin/bash "$ROOT/setup/exakit" uninstall "$_c" --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
     case "$_uout" in
-        *"Unknown option"*) check "exakit uninstall $_c is rejected" "rejected" "rejected" ;;
-        *)                  check "exakit uninstall $_c is rejected" "rejected" "ACCEPTED" ;;
+        *"Unknown uninstall target"*) check "exakit uninstall $_c is rejected" "rejected" "rejected" ;;
+        *)                            check "exakit uninstall $_c is rejected" "rejected" "ACCEPTED" ;;
     esac
 done
-_uadv="$(cat "$ROOT/setup/lib/common.sh" "$ROOT/setup/exakit.ps1" "$ROOT/setup/help/exakit.json")"
-case "$_uadv" in
-    *"One component on purpose"*) check "nothing advertises a by-name uninstall" "absent" "PRESENT" ;;
-    *)                            check "nothing advertises a by-name uninstall" "absent" "absent" ;;
+# A registered add-on id is a real target. Any of the three honest answers
+# passes; the one wrong answer is calling it unknown.
+_uout="$(EXAKIT_HOME="$SANDBOX/none-such" /bin/bash "$ROOT/setup/exakit" uninstall dash-server --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+case "$_uout" in
+    *"Unknown uninstall target"*|*"Unknown option"*)
+        check "exakit uninstall dash-server is a real target" "accepted" "REJECTED" ;;
+    *)  check "exakit uninstall dash-server is a real target" "accepted" "accepted" ;;
 esac
 
 echo
