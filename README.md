@@ -185,57 +185,14 @@ build your own add-on: [MARKETPLACE.md](MARKETPLACE.md).
 
 ## Staying up to date
 
-The maintainers publish one **tested set** of versions, `versions.json` on the
-kit repository's `main` branch: the kit scripts, the database runtime, exapump,
-the MCP server, pyexasol, the agent skills and every add-on. Your machine reads
-that file (refreshed at most once a day, cached for offline use) and compares it
-with what is installed. An update therefore means "move to the combination the
-maintainers verified together", never "hope independent releases work with each
-other".
+The maintainers publish one recommended set of versions in `versions.json` on the kit's `main` branch. Your machine reads it (at most once a day, cached for offline use) and compares it with what is installed.
 
 ```bash
-exakit version           # one row per component: installed, advertised, status
-exakit version --json    # the same as one object
-exakit update            # apply everything that is pending
+exakit version    # installed, recommended and status, one row per component
+exakit update     # apply everything that is pending
 ```
 
-What `exakit update` does, in order:
-
-1. **The kit itself.** When a newer kit version is advertised, it downloads the
-   kit repository's `main` archive, replaces the kit scripts, keeps the previous
-   copy beside them (`~/.exasol-starter-kit/kit.backup-<timestamp>`), refreshes
-   the agent skills and shows a "What's new" card for every version you crossed.
-   Database data, credentials and MCP client configs are not touched.
-2. **The database runtime.** This one stops the database for a minute or two, so
-   it **asks first**, and in a script, a pipe or CI, where nobody can answer, it is
-   never started on its own. Opt in with `exakit update --yes` (or
-   `EXAKIT_CONFIRM_RUNTIME_UPDATE=1`). Your data is kept: the update reuses the
-   same data volume, and the previous version is put back if the new one does not
-   come up.
-3. **exapump, the MCP server, pyexasol** in seconds, digest-verified, no downtime.
-4. **The agent skills.** The skill set has its own version. When the maintainers
-   bump it, `exakit update` fetches the new set from `main` and places it, no kit
-   release needed.
-5. **Installed add-ons**, each through its own module.
-
-Anything already current is skipped; "Everything is already current" means
-exactly that.
-
-A few things worth knowing:
-
-- **You are told, quietly.** When a pending update is `recommended` or `critical`,
-  one dim line appears after another command, at most once a day. `normal`
-  updates never interrupt. `EXAKIT_NO_UPDATE_NOTICE=1` turns the line off.
-- **The kit never moves a component backwards.** If a release is withdrawn and
-  the tested version goes down, a machine already on the higher one shows both
-  numbers and nothing changes.
-- **Offline is fine.** Version resolution falls back to the cached copy, then to
-  the copy that shipped with your kit. No command fails because the update check
-  could not reach the network.
-- **Fresh installs always get the tested set**, because the installer reads the
-  same file. `EXAKIT_VERSION_POLICY=latest` resolves each component from its own
-  upstream instead; `pinned` uses the kit's built-in fallbacks and touches no
-  network. `EXAKIT_VERSIONS_URL` points at a different `versions.json`.
+`exakit update` refreshes the kit scripts, exapump, the MCP server, pyexasol, the agent skills and installed add-ons in seconds, with no downtime. A database runtime update stops the database for a minute or two, so it asks first and never runs unattended (opt in with `exakit update --yes`). Data, credentials and MCP configs are never touched, the previous kit copy is kept, and the kit never moves a component backwards.
 
 ## Safety and operations
 
@@ -269,7 +226,7 @@ https://github.com/user-attachments/assets/77916db0-d273-4720-8d59-1aedac95d5e8
 | Behind&nbsp;a&nbsp;corporate&nbsp;proxy? | `export HTTPS_PROXY=...` and re-run. |
 | Where's&nbsp;the&nbsp;deep-dive&nbsp;for&nbsp;my&nbsp;OS? | [macOS](quickstarts/macos.md) · [WSL](quickstarts/windows-wsl.md) · [Windows + Docker](quickstarts/windows-docker.md) |
 | Installing&nbsp;over&nbsp;a&nbsp;database<br>I&nbsp;already&nbsp;have? | **It is adopted, not replaced.** A running database is reused (the installer asks, and defaults to yes); a stopped one is started and reused. Your data is untouched. Only a database that cannot start at all is replaced, and the installer says so first — including that the previous data is not recoverable. |
-| How&nbsp;do&nbsp;updates&nbsp;work? | The maintainers publish one tested set of versions. `exakit version` shows what is pending; `exakit update` applies it. See [Staying up to date](#staying-up-to-date). |
+| How&nbsp;do&nbsp;updates&nbsp;work? | The maintainers publish one recommended set of versions. `exakit version` shows what is pending, `exakit update` applies it. See [Staying up to date](#staying-up-to-date). |
 | How&nbsp;do&nbsp;I&nbsp;remove&nbsp;everything? | `exakit uninstall` |
 
 ---
