@@ -56,7 +56,8 @@ if (Test-Path $earlyPs1) {
     try {
         New-Item -ItemType Directory -Force -Path $script:BinDir | Out-Null
         [void](Set-ExakitCmdShim -PsTarget $earlyPs1)
-        Info "exakit command ready - follow this install from another shell with: exakit status"
+        # Recorded in the log, not on the screen. Twin of exakit_install_helper_early.
+        Write-ExakitLog "INFO" "exakit command ready - exakit status answers from here on"
     } catch { }
 }
 

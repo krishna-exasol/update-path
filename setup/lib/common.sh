@@ -5134,7 +5134,9 @@ exakit_install_helper_early() {
     if [ ! -x "$EXAKIT_BIN_DIR/exakit" ] || ! cmp -s "$_ihe_src" "$EXAKIT_BIN_DIR/exakit" 2>/dev/null; then
         install -m 755 "$_ihe_src" "$EXAKIT_BIN_DIR/exakit" 2>/dev/null || return 0
     fi
-    info "exakit command ready — follow this install from another shell with: exakit status"
+    # Recorded in the log, not on the screen: the command being ready is a
+    # fact for the log and for `exakit status` itself, not news for the reader.
+    _exakit_log_file "INFO  exakit command ready (~/.local/bin/exakit) — exakit status answers from here on"
     return 0
 }
 
