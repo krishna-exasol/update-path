@@ -476,6 +476,10 @@ function Invoke-CmdStatus {
     }
     if ($installStopped) {
         Write-Host "Finish it:  re-run the installer (it stopped at step: $installStep)"
+        # No "Start it" underneath: with no runtime recorded yet, `exakit start`
+        # can only answer "No runtime recorded in the manifest yet" - the
+        # installer is the one command that finishes this.
+        if (-not $type) { exit 3 }
     }
     # No "Manifest:" row: an internal file path, on the last line of the screen,
     # that nothing on this screen asks the reader to open.

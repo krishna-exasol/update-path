@@ -672,7 +672,10 @@ function Install-Nano {
             Write-ExakitError "Port $($script:DbPort) is already taken$suffix."
             # The non-destructive remedy first: the port is recorded at install
             # and every later `exakit start` reuses it, so this is a one-time choice.
-            Info "Run the database on another port: `$env:EXAKIT_DB_PORT = '8564'  then re-run (the kit records it; later commands reuse it)."
+            # Warn2, not Info: this step runs quiet on a terminal (Info goes to
+            # the log only), and a user watching the install saw the two error
+            # lines with no remedy under them - the remedy was in the log.
+            Warn2 "Run the database on another port: `$env:EXAKIT_DB_PORT = '8564'  then re-run (the kit records it; later commands reuse it)."
             $wslHolder = ""
             if ($who -match "wslrelay|vmmem") { $wslHolder = Get-ExakitWslPortPublisher -Port ([int]$script:DbPort) }
             if ($wslHolder) {
@@ -681,9 +684,9 @@ function Install-Nano {
                 # invisible to the Windows Docker engine, so the shared-engine
                 # adoption does not apply and `wsl --shutdown` would stop THAT
                 # database.
-                Info "The port is published by the container '$wslHolder' inside WSL (probably another Exasol). Leave it and take another port, or stop it from inside WSL."
+                Warn2 "The port is published by the container '$wslHolder' inside WSL (probably another Exasol). Leave it and take another port, or stop it from inside WSL."
             } elseif ($who -match "wslrelay|vmmem|docker") {
-                Info "That is a WSL or Docker relay still holding the port from an earlier container. If nothing in WSL needs it: wsl --shutdown"
+                Warn2 "That is a WSL or Docker relay still holding the port from an earlier container. If nothing in WSL needs it: wsl --shutdown"
             }
             Fail "Port $($script:DbPort) is not available."
         }
