@@ -327,6 +327,7 @@ nano_start_existing() {
         run_logged "$_engine" rm -f "$EXAKIT_NANO_CONTAINER" || die "Could not replace the old container (see log)"
         run_logged "$_engine" run -d \
             --name "$EXAKIT_NANO_CONTAINER" \
+            --label "com.exasol.exakit.os=$(detect_os)" \
             --shm-size=512mb \
             --pids-limit=-1 \
             -p "127.0.0.1:${EXAKIT_DB_PORT}:8563" \
@@ -459,8 +460,31 @@ nano_install() {
             warn "Could not remove the existing Nano data volume; the rebuild may reuse its data."
     fi
 
+    # ADOPTION NEEDS THE PASSWORD. Windows and WSL share one Docker engine, so
+    # a container found here may be the OTHER side's database: adopting it
+    # without that side's stored SYS password used to record a password_file
+    # that does not exist, report "already running and healthy", and then fail
+    # at the MCP step demanding a password this machine never had — a silent
+    # takeover that left the Windows kit with no database. Refuse it instead:
+    # name the creator when the container carries the label, and give the
+    # three real ways out.
+    if nano_container_exists && [ ! -s "${EXAKIT_CREDS_DIR}/nano_sys_password" ]; then
+        _nano_creator="$("$_engine" container inspect \
+            -f '{{ index .Config.Labels "com.exasol.exakit.os" }}' \
+            "$EXAKIT_NANO_CONTAINER" 2>/dev/null || true)"
+        warn "An Exasol Nano container ($EXAKIT_NANO_CONTAINER) already exists, but this machine has no stored password for it${_nano_creator:+ — it was created by a $_nano_creator install}."
+        warn "Windows and WSL share one Docker engine, so this is usually the other side's database. Three ways forward:"
+        info_step "1. Adopt it WITH its password: copy the creating side's ~/.exasol-starter-kit/credentials/nano_sys_password into $EXAKIT_CREDS_DIR and re-run."
+        info_step "2. Run your own database beside it: re-run with EXAKIT_NANO_CONTAINER and EXAKIT_NANO_VOLUME set to new names (and EXAKIT_DB_PORT to a free port)."
+        info_step "3. Last resort — DELETES the other side's database and its data: re-run with EXAKIT_REUSE_DB=0."
+        die "Refusing to silently adopt a database this install has no password for."
+    fi
+
     if nano_container_running && nano_ready_in_logs; then
-        ok "Nano container already running and healthy"
+        # ok_step, not ok: adoption must reach the SCREEN even under a
+        # one-line step narration — a user whose database was just adopted
+        # rather than deployed deserves to see it happen.
+        ok_step "Adopting the running Nano container $EXAKIT_NANO_CONTAINER — already healthy (its data and password are kept)"
         nano_record_manifest
         return 0
     fi
@@ -468,6 +492,7 @@ nano_install() {
     if nano_container_exists && ! nano_container_running; then
         info "Found existing Nano container — starting it"
         nano_start_existing
+        ok_step "Adopted the existing Nano container $EXAKIT_NANO_CONTAINER (started; its data and password are kept)"
         nano_record_manifest
         return 0
     fi
@@ -585,6 +610,7 @@ nano_install() {
             info "Adopting the existing database volume $EXAKIT_NANO_VOLUME (its data and password are kept)"
             run_logged "$_engine" run -d \
                 --name "$EXAKIT_NANO_CONTAINER" \
+                --label "com.exasol.exakit.os=$(detect_os)" \
                 --shm-size=512mb \
                 --pids-limit=-1 \
                 -p "127.0.0.1:${EXAKIT_DB_PORT}:8563" \
@@ -596,6 +622,7 @@ nano_install() {
         else
             run_logged "$_engine" run -d \
                 --name "$EXAKIT_NANO_CONTAINER" \
+                --label "com.exasol.exakit.os=$(detect_os)" \
                 --shm-size=512mb \
                 --pids-limit=-1 \
                 -p "127.0.0.1:${EXAKIT_DB_PORT}:8563" \
@@ -855,6 +882,7 @@ nano_update() {
     info "Starting Nano with the existing data volume"
     run_logged "$_engine" run -d \
         --name "$EXAKIT_NANO_CONTAINER" \
+        --label "com.exasol.exakit.os=$(detect_os)" \
         --shm-size=512mb \
         --pids-limit=-1 \
         -p "127.0.0.1:${EXAKIT_DB_PORT}:8563" \
@@ -905,6 +933,7 @@ nano_restore_previous_container() {
     run_logged "$(nano_engine)" rm -f "$EXAKIT_NANO_CONTAINER" || true
     run_logged "$(nano_engine)" run -d \
         --name "$EXAKIT_NANO_CONTAINER" \
+        --label "com.exasol.exakit.os=$(detect_os)" \
         --shm-size=512mb \
         --pids-limit=-1 \
         -p "127.0.0.1:${EXAKIT_DB_PORT}:8563" \

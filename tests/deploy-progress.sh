@@ -502,5 +502,29 @@ has "...and Windows too"            "        Install-NanoImage"  "$NANO_PS_6"
 has "an existing image is not refetched" "already present; not pulling again" "$NANO_SH_6"
 has "...and Windows says so too"         "already present; not pulling again" "$NANO_PS_6"
 
+# --- adoption never silently takes over another install's database -----------
+# Windows and WSL share one Docker engine, so the container the install finds
+# may be the OTHER side's database. Adopting it without that side's stored SYS
+# password used to record a password_file that does not exist, report healthy,
+# and strand both sides. The guard refuses; the label names the creator.
+echo
+echo "cross-runtime adoption is loud, labeled, and password-gated:"
+has "adoption without the password is refused" \
+    'Refusing to silently adopt a database this install has no password for' "$NANO_SH_6"
+has "...and on Windows too" \
+    'Refusing to silently adopt a database this install has no password for' "$NANO_PS_6"
+has "the refusal names the shared engine" \
+    "Windows and WSL share one Docker engine" "$NANO_SH_6"
+# The creator label at EVERY container creation: adopt, fresh, recreate,
+# update and restore all pass through a line carrying it, so provenance is
+# never unrecoverable again.
+check "every shell run site carries the creator label" "5" \
+    "$(printf '%s\n' "$NANO_SH_6" | grep -c -- '--label "com.exasol.exakit.os=')"
+check "...and every Windows run site too" "5" \
+    "$(printf '%s\n' "$NANO_PS_6" | grep -c -- '"--label" "com.exasol.exakit.os=windows"')"
+# The adoption notice survives a one-line step narration (ok_step, not ok).
+has "adoption reaches the screen" 'ok_step "Adopt' "$NANO_SH_6"
+has "...on Windows as well"       'OkStep "Adopt' "$NANO_PS_6"
+
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
