@@ -21,11 +21,11 @@
     "already had the kit working and wants to know what is different."
   ],
   "0.2.0": [
-    "New: exakit marketplace adds dashboards, VS Code and JSON loading.",
-    "New: exakit update applies the tested version set, AI skills too.",
-    "New: exakit version shows installed and advertised versions.",
-    "New: exakit sql runs SQL or a file; --json returns one object.",
+    "exakit marketplace adds dashboards, VS Code and JSON loading.",
+    "exakit update applies the recommended version set, AI skills too.",
+    "exakit version shows installed and recommended versions.",
+    "exakit sql runs SQL or a file, and --json returns one object.",
     "Agents can drive every command: --json output, exit 2 on bad input.",
-    "Services return after a reboot; exakit uninstall picks what goes."
+    "Services return after a reboot. exakit uninstall picks what goes."
   ]
 }
