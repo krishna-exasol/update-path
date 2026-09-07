@@ -6379,6 +6379,17 @@ exakit_skill_addon() {
     exakit_skill_field "$1" addon
 }
 
+# _exakit_skill_gating_addon <skill-name> — the add-on that gates this skill
+# and is NOT installed; empty when the skill is not gated, or the gate is open.
+_exakit_skill_gating_addon() {
+    _sga_dir="$(exakit_skills_dir 2>/dev/null)" || return 0
+    [ -f "$_sga_dir/$1/SKILL.md" ] || return 0
+    _sga_owner="$(exakit_skill_addon "$_sga_dir/$1/SKILL.md" 2>/dev/null || true)"
+    [ -n "$_sga_owner" ] || return 0
+    exakit_marketplace_addon_installed "$_sga_owner" 2>/dev/null && return 0
+    printf '%s\n' "$_sga_owner"
+}
+
 # exakit_skills_for_addon <addon-id> — the skill folder names that add-on owns.
 exakit_skills_for_addon() {
     _sfa_dir="$(exakit_skills_dir)" || return 0
@@ -6549,9 +6560,21 @@ exakit_skills_list() {
             [ -n "$_skl_id" ] || continue
             [ "$_skl_first" -eq 1 ] || printf ','
             _skl_first=0
-            printf '{"name":"%s","state":"%s","summary":"%s"}' \
-                "$_skl_id" "$(exakit_skill_state "$_skl_id")" \
-                "$(printf '%s' "$_skl_sum" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+            _skl_state="$(exakit_skill_state "$_skl_id")"
+            _skl_owner="$(_exakit_skill_gating_addon "$_skl_id")"
+            # An add-on's skill is never "available" to skills-install — that
+            # command deliberately skips it, so calling it available
+            # prescribed a command that cannot change it. It arrives with its
+            # add-on, and the state says so, naming whose it is.
+            if [ "$_skl_state" = "available" ] && [ -n "$_skl_owner" ]; then
+                printf '{"name":"%s","state":"needs-addon","addon":"%s","remedy":"exakit marketplace %s","summary":"%s"}' \
+                    "$_skl_id" "$_skl_owner" "$_skl_owner" \
+                    "$(printf '%s' "$_skl_sum" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+            else
+                printf '{"name":"%s","state":"%s","summary":"%s"}' \
+                    "$_skl_id" "$_skl_state" \
+                    "$(printf '%s' "$_skl_sum" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+            fi
         done <<EXAKIT_SKL_EOF
 $(exakit_skills_registry)
 EXAKIT_SKL_EOF
@@ -6564,7 +6587,12 @@ EXAKIT_SKL_EOF
         _skj_missing=0
         while IFS='|' read -r _skj_id _skj_sum; do
             [ -n "$_skj_id" ] || continue
-            [ "$(exakit_skill_state "$_skj_id")" = "installed" ] || _skj_missing=$((_skj_missing + 1))
+            # An add-on-gated skill whose add-on is absent is not MISSING:
+            # skills-install cannot place it, so counting it would prescribe a
+            # command that changes nothing, forever.
+            [ "$(exakit_skill_state "$_skj_id")" = "installed" ] || \
+                [ -n "$(_exakit_skill_gating_addon "$_skj_id")" ] || \
+                _skj_missing=$((_skj_missing + 1))
         done <<EXAKIT_SKJ_EOF
 $(exakit_skills_registry)
 EXAKIT_SKJ_EOF
@@ -6588,8 +6616,17 @@ EXAKIT_SKJ_EOF
     while IFS='|' read -r _skl_id _skl_sum; do
         [ -n "$_skl_id" ] || continue
         _skl_state="$(exakit_skill_state "$_skl_id")"
-        [ "$_skl_state" = "installed" ] || _skl_pending=$((_skl_pending + 1))
-        ui_panel_line "$(printf '%-26s %-10s %s' "$_skl_id" "$_skl_state" "$_skl_sum")"
+        # An add-on's skill arrives with its add-on; "available" beside advice
+        # to run skills-install prescribed a command that deliberately skips
+        # it. Say whose it is instead, and leave it out of the pending count
+        # the advice below is computed from.
+        _skl_owner="$(_exakit_skill_gating_addon "$_skl_id")"
+        if [ "$_skl_state" = "available" ] && [ -n "$_skl_owner" ]; then
+            _skl_state="with $_skl_owner"
+        elif [ "$_skl_state" != "installed" ]; then
+            _skl_pending=$((_skl_pending + 1))
+        fi
+        ui_panel_line "$(printf '%-26s %-22s %s' "$_skl_id" "$_skl_state" "$_skl_sum")"
         _skl_count=$((_skl_count + 1))
     done <<EXAKIT_SKL_EOF
 $(exakit_skills_registry)
@@ -6683,6 +6720,24 @@ exakit_install_skills() {
         return 1
     fi
     ok "Installed $_installed AI skill$([ "$_installed" = 1 ] || printf 's') for Claude Code (~/.claude/skills) and open-standard agents (~/.agents/skills)"
+
+    # A skill the NEW set no longer carries leaves the discovery roots with the
+    # update: it was placed by the kit — the manifest's installed list is the
+    # proof — and left behind it keeps firing its triggers forever for a
+    # workflow this kit no longer ships. Only recorded names are touched; the
+    # roots also hold skills the user installed themselves, which the kit must
+    # never remove.
+    _isk_prev="$(manifest_get components.skills.installed 2>/dev/null | tr -d '[]"' | tr ',' ' ')"
+    _isk_retired=0
+    for _isk_name in $_isk_prev; do
+        [ -n "$_isk_name" ] || continue
+        [ -f "$_skills_src/$_isk_name/SKILL.md" ] && continue
+        _exakit_skill_unplace "$_isk_name"
+        _exakit_log_file "OK    Retired skill: $_isk_name (no longer in the kit's skill set)"
+        _isk_retired=$((_isk_retired + 1))
+    done
+    [ "$_isk_retired" -gt 0 ] && \
+        ok "Retired $_isk_retired skill$([ "$_isk_retired" = 1 ] || printf 's') the new set no longer carries"
 
     # Record what was placed and which skill-set version it came from. This is
     # the only honest source for two later questions: which skill directories

@@ -43,9 +43,10 @@ user's request actually needs, not a manual for the whole kit.
 
 **The marketplace** — opt-in add-ons
 
-The four add-on skills below are **installed with their add-on**, not with the
-kit: each declares `addon: <id>` in its frontmatter, and the marketplace places
-it as part of installing that add-on and removes it again when the add-on goes.
+`exasol-marketplace` itself installs with the kit; the other four skills below
+are **installed with their add-on**, not with the kit: each declares
+`addon: <id>` in its frontmatter, and the marketplace places it as part of
+installing that add-on and removes it again when the add-on goes.
 A skill is a set of triggers for an agent to match on, and matching them for a
 tool that is not on the machine is worse than not shipping the skill at all.
 

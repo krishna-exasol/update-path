@@ -1,6 +1,6 @@
 ---
 name: local-agent-ready-starter
-description: Use this to set up the Exasol Personal Local Starter Kit and run a first trusted, AI-assisted query against a local Exasol database — installing the local runtime, connecting an AI client over MCP, loading the sample data, and running the ask → inspect-SQL → run → validate → rerun loop. Triggers — "set up the Exasol starter kit", "install Exasol locally", "connect my AI to Exasol", "run my first query on my local database", "help me get started with the starter kit".
+description: Use this to set up the Exasol Personal Local Starter Kit and run a first trusted, AI-assisted query against a local Exasol database — installing the local runtime, connecting an AI client over MCP, loading the sample data, and running the ask → inspect-SQL → run → validate → rerun loop. Triggers — "set up the Exasol starter kit", "install Exasol locally", "set up the starter kit and connect my AI", "run my first query on my local database", "help me get started with the starter kit".
 ---
 
 # Local Agent-Ready Starter
