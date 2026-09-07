@@ -968,13 +968,42 @@ foreach (`$f in @($quoted)) { try { Remove-Item -Force -ErrorAction SilentlyCont
 }
 
 function Invoke-CmdUninstall {
-    param([switch]$AssumeYes, [switch]$DryRun)
+    param([switch]$AssumeYes, [switch]$DryRun, [string]$Addon = "")
     Initialize-ExakitLogging
 
     if (-not (Test-Path $script:ManifestPath) -and
         -not (Test-Path (Join-Path $script:BinDir "exakit.cmd")) -and
         -not (Test-Path $script:ExakitHome)) {
         Info "Nothing to uninstall - no manifest, kit home, or installed binaries were found."
+        return
+    }
+
+    # A marketplace add-on by name: selective removal an agent or a script can
+    # call, instead of the TTY-only menu being the sole route to removing one
+    # piece. Twin of the same branch in cmd_uninstall (setup/exakit).
+    if ($Addon) {
+        $known = @(Get-ExakitMarketplaceAddons | ForEach-Object { $_.Id })
+        if ($known -notcontains $Addon) {
+            Write-Host ""
+            Write-Host "  [x] Unknown uninstall target '$Addon' (known add-ons: $($known -join ' '); bare 'exakit uninstall' removes the kit)."
+            exit 2
+        }
+        if (-not (Test-ExakitMarketplaceAddonInstalled $Addon)) {
+            Info "$Addon is not installed - nothing to remove."
+            return
+        }
+        if ($DryRun) {
+            Info "Dry run - would remove the $Addon add-on (its service, binary and credential; nothing else)."
+            return
+        }
+        if (-not $AssumeYes) {
+            if (-not (Confirm-ExakitPrompt "Remove the $Addon add-on?" -DefaultYes:$false)) {
+                Info "Nothing was removed."
+                return
+            }
+        }
+        Invoke-ExakitUninstallComponent -Key $Addon
+        Ok "$Addon removed. Reinstall any time with: exakit marketplace $Addon"
         return
     }
 
@@ -1501,9 +1530,62 @@ function Write-ExakitVersionNote {
 # setup/lib/exakit-common.ps1 so the installer's closing offer can use it too
 # - mirroring the bash side, where it all lives in common.sh. This file only
 # carries the command entry point.
+# Invoke-CmdMarketplace [--list [--json]] [<addon-id>...] - bare, it browses
+# (and without a terminal it installs NOTHING; the menu says how to ask
+# explicitly). --list is the read-only surface an agent can always call;
+# --json makes it machine-readable. Ids are a targeted install: `exakit
+# marketplace dash-server` installs dash-server and nothing else - it used to
+# silently DISCARD the id and install the other pending add-ons instead.
+# Twin of cmd_marketplace in setup/exakit.
 function Invoke-CmdMarketplace {
+    param([string[]]$Arguments = @())
     if (-not (Test-Path $script:ManifestPath)) { Fail "No installation found. Run the installer first." }
+    $list = $false
+    $json = $false
+    $ids = @()
+    $known = @(Get-ExakitMarketplaceAddons | ForEach-Object { $_.Id })
+    # Bad input is refused with the bad-input code, the same style
+    # Assert-ExakitKnownOptions uses - exit 2, nothing runs, no failure note.
+    foreach ($arg in $Arguments) {
+        switch -Regex ($arg) {
+            '^(--list|-List)$' { $list = $true; continue }
+            '^(--json|-Json)$' { $json = $true; continue }
+            '^-' {
+                Write-Host ""
+                Write-Host "  [x] Unknown option '$arg' for marketplace (supported: --list, --json, or add-on ids to install)."
+                exit 2
+            }
+            default {
+                if ($known -contains $arg) { $ids += $arg }
+                else {
+                    Write-Host ""
+                    Write-Host "  [x] Unknown marketplace add-on '$arg' (known: $($known -join ' '))."
+                    exit 2
+                }
+            }
+        }
+    }
+    if ($list -or $json) {
+        if ($ids.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  [x] marketplace --list is read-only and cannot be combined with add-on ids to install."
+            exit 2
+        }
+        Show-ExakitMarketplaceList -Json:$json
+        return
+    }
     Initialize-ExakitLogging
+    if ($ids.Count -gt 0) {
+        $previous = $env:EXAKIT_MARKETPLACE_ADDONS
+        try {
+            $env:EXAKIT_MARKETPLACE_ADDONS = ($ids -join ",")
+            Show-ExakitMarketplaceMenu
+        } finally {
+            if ($null -ne $previous) { $env:EXAKIT_MARKETPLACE_ADDONS = $previous }
+            else { Remove-Item Env:\EXAKIT_MARKETPLACE_ADDONS -ErrorAction SilentlyContinue }
+        }
+        return
+    }
     Show-ExakitMarketplaceMenu
 }
 
@@ -2707,10 +2789,14 @@ try {
             }
         }
         "skills-install" { Assert-ExakitKnownOptions -CommandName "skills-install" -Allowed @() -Arguments $RestArgs; Invoke-CmdSkillsInstall }
-        "marketplace"  { Assert-ExakitKnownOptions -CommandName "marketplace" -Allowed @() -Arguments $RestArgs; Invoke-CmdMarketplace }
+        "marketplace"  { Invoke-CmdMarketplace -Arguments $RestArgs }
         "upgrade-kit2"  { Write-ExakitKit2NotAvailable -Command "exakit upgrade-kit2" }
         "rollback-kit2" { Write-ExakitKit2NotAvailable -Command "exakit rollback-kit2" }
-        "uninstall"    { Invoke-CmdUninstall -AssumeYes:($RestArgs -contains "-Yes" -or $RestArgs -contains "--yes" -or $RestArgs -contains "-y") -DryRun:($RestArgs -contains "-DryRun" -or $RestArgs -contains "--dry-run" -or $RestArgs -contains "-n") }
+        "uninstall"    {
+            # One optional positional: a marketplace add-on id for selective
+            # removal; validated inside Invoke-CmdUninstall.
+            $unAddon = "" + (@($RestArgs | Where-Object { "$_" -notlike "-*" }) | Select-Object -First 1)
+            Invoke-CmdUninstall -Addon $unAddon -AssumeYes:($RestArgs -contains "-Yes" -or $RestArgs -contains "--yes" -or $RestArgs -contains "-y") -DryRun:($RestArgs -contains "-DryRun" -or $RestArgs -contains "--dry-run" -or $RestArgs -contains "-n") }
         "whats-new"    { Assert-ExakitKnownOptions -CommandName "whats-new" -Allowed @() -Arguments $RestArgs; Invoke-CmdWhatsNew -Version ($RestArgs | Select-Object -First 1) }
         "logs"         { Invoke-CmdLogs -LogArgs $RestArgs }
         "catalog"      {
