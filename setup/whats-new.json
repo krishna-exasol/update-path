@@ -22,35 +22,10 @@
   ],
   "0.2.0": [
     "New: exakit marketplace adds dashboards, VS Code and JSON loading.",
-    "New: exakit update applies the tested version set.",
+    "New: exakit update applies the tested version set, AI skills too.",
     "New: exakit version shows installed and advertised versions.",
-    "The installer downloads 4x less: 27 MB down to 6.5 MB."
-  ],
-  "0.2.2": [
-    "exakit status says installing while the installer runs.",
-    "exakit sql runs a saved file: --file <path> or stdin.",
-    "Fixes come first in exakit sql errors, on stdout.",
-    "exakit version --json and mcp-status --json return objects.",
-    "EXAKIT_MCP_CLIENTS=all now means the clients installed here.",
-    "A busy database port is reported as a conflict, not running."
-  ],
-  "0.2.3": [
-    "EXAKIT_MCP_CLIENTS=all skips clients the kit only wrote a file for.",
-    "A client counts as installed by its program or app, not its config."
-  ],
-  "0.2.4": [
-    "exakit sql --json returns one object: rows, or error plus remedy.",
-    "exakit status --json names a remedy for each unfinished step.",
-    "mcp-doctor blames only the client whose config drifted.",
-    "mcp-setup re-offers a client whose config lost the kit's entry.",
-    "SELECT TOP and a busy-port TLS failure now come with a hint."
-  ],
-  "0.2.5": [
-    "exakit sql --json handles any result size and reports row_count.",
-    "exakit mcp-remove <client> drops the kit's entries from a client.",
-    "mcp-doctor repairs warnings; add-ons reach connected clients only.",
-    "Every command refuses an unknown option with exit 2, before acting.",
-    "A crashed installer no longer leaves status saying installing.",
-    "Unsupported data files are refused up front, never a failed step."
+    "New: exakit sql runs SQL or a file; --json returns one object.",
+    "Agents can drive every command: --json output, exit 2 on bad input.",
+    "Services return after a reboot; exakit uninstall picks what goes."
   ]
 }
