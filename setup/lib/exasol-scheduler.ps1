@@ -116,6 +116,16 @@ function Get-ExasolSchedulerSystemPresent {
     return $false
 }
 
+# Twin of exasol_scheduler_latest: the installable version is the one
+# versions.json advertises (built and mirrored by the packaging workflow),
+# not whatever upstream tagged. See Get-JsonTablesLatest for why the generic
+# repo lookup is the wrong answer here.
+function Get-ExasolSchedulerLatest {
+    $advertised = Get-ExakitVersionsValue -Path "components.exasol-scheduler.version"
+    if ($advertised) { return $advertised }
+    return $script:ExasolSchedulerVersionFallback
+}
+
 function Get-ExasolSchedulerInstalledVersion {
     if (-not (Test-Path (Get-ExasolSchedulerEnginePath))) { return "" }
     $recorded = Get-ExakitManifestValue "components.exasol_scheduler.version"

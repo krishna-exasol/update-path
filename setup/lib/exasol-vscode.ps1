@@ -77,6 +77,15 @@ function Get-ExasolVscodeInstalledVersion {
     return (Get-ExasolVscodeLiveVersion)
 }
 
+# The extension is on this machine but the KIT did not put it there: the user
+# installed it from the VS Code Marketplace themselves. Without this detector
+# Windows adopted such a copy as its own and a later uninstall DELETED an
+# extension the kit never installed. Twin of exasol_vscode_system_present.
+function Test-ExasolVscodeSystemPresent {
+    if (Get-ExakitManifestValue "components.exasol_vscode.version") { return $false }
+    return [bool](Get-ExasolVscodeLiveVersion)
+}
+
 # An editor extension is only an option when the editor is here. Without VS
 # Code the add-on is not offered at all: no row in the marketplace, no mention
 # in the closing offer or the discovery lines. An already kit-installed copy

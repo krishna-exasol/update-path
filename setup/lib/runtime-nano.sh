@@ -522,10 +522,23 @@ nano_install() {
             # this port long after its container is gone.
             _nip_who="$(port_holder_desc "$EXAKIT_DB_PORT" 2>/dev/null || true)"
             error "Port $EXAKIT_DB_PORT is already taken${_nip_who:+ by $_nip_who}."
-            printf '    Free it, or run the database on another port:
+            # The non-destructive remedy first, with the same promise the
+            # Windows twin makes: the port is recorded at install and every
+            # later `exakit start` reuses it, so this is a one-time choice.
+            printf '    Free it, or run the database on another port (the kit records it; later commands reuse it):
 ' >&2
             printf '      EXAKIT_DB_PORT=8564 %s
 ' "$(exakit_install_command 2>/dev/null || echo 'bash setup/setup-wsl.sh')" >&2
+            if [ "$(detect_os)" = "wsl" ]; then
+                # Inside WSL the holder is often INVISIBLE from here: Windows
+                # and WSL share localhost, so a Windows-side Exasol install or
+                # Docker Desktop container can hold this port while nothing in
+                # this distro shows up in lsof. Twin of the WSL guidance in
+                # Install-Nano (nano.ps1).
+                printf '    Nothing here holding it? Windows and WSL share localhost - check the WINDOWS side\n' >&2
+                printf '    of this machine (a Windows Exasol install, or a Docker Desktop container) or take\n' >&2
+                printf '    another port.\n' >&2
+            fi
             die "Port $EXAKIT_DB_PORT is not available."
         fi
         # The pull is its own STEP now, and this is the same function that step

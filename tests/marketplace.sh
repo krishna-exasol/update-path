@@ -1936,5 +1936,30 @@ check "the JSON form is valid JSON" "yes" \
 has "and carries a status per add-on" '"status": ' "$_mm_listjson"
 has "and an installed boolean"        '"installed": ' "$_mm_listjson"
 
+echo
+echo "the Windows registry dispatches the same per-add-on hooks as the shell:"
+# THE PARITY GAP THIS PINS: the PS registry had no field for the per-add-on
+# hooks the shell registry dispatches to. Get-JsonTablesSystemPresent and
+# Get-ExasolSchedulerSystemPresent were dead code, exasol-vscode had no
+# Windows detector at all (the kit adopted and later DELETED a user's own
+# Marketplace extension), "never offered twice" held on three platforms and
+# failed on Windows, and "latest" was always empty there so the update check
+# could not see either binary add-on.
+COMMON_PS_TP="$(cat "$ROOT/setup/lib/exakit-common.ps1")"
+has "the registry declares json-tables' detector"   'SystemPresentFn = "Get-JsonTablesSystemPresent"' "$COMMON_PS_TP"
+has "...and the scheduler's"                        'SystemPresentFn = "Get-ExasolSchedulerSystemPresent"' "$COMMON_PS_TP"
+has "...and the VS Code extension's"                'SystemPresentFn = "Test-ExasolVscodeSystemPresent"' "$COMMON_PS_TP"
+has "the detector exists for VS Code"               'function Test-ExasolVscodeSystemPresent' "$(cat "$ROOT/setup/lib/exasol-vscode.ps1")"
+has "the present probe dispatches the hook first"   '$addon.SystemPresentFn' "$COMMON_PS_TP"
+has "the registry declares json-tables' latest"     'LatestFn     = "Get-JsonTablesLatest"' "$COMMON_PS_TP"
+has "...and the scheduler's"                        'LatestFn     = "Get-ExasolSchedulerLatest"' "$COMMON_PS_TP"
+has "the latest lookup dispatches the hook first"   '$addon.LatestFn' "$COMMON_PS_TP"
+# ADD-01/CPY-02: "recorded, so every command agrees" was false on Windows -
+# the module never read the port back. The audit's own zero-occurrence check,
+# inverted into the guard.
+check "dash-server.ps1 reads the recorded port back" "1" \
+    "$(grep -c 'Get-ExakitManifestValue "components.dash_server.port"' "$ROOT/setup/lib/dash-server.ps1")"
+has "...resolved before every entry point" 'function Resolve-DashServerPort' "$(cat "$ROOT/setup/lib/dash-server.ps1")"
+
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
