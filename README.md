@@ -134,13 +134,12 @@ The kit ships **three bundled datasets**, each in its own schema, so your AI cli
 | **Smart&#8209;meter&nbsp;energy&nbsp;readings** | A ~108k-row time series ([data/datasets/energy](data/datasets/energy)) | `ENERGY` |
 | **Daily&nbsp;city&nbsp;weather&nbsp;history** | ~11k rows ([data/datasets/weather](data/datasets/weather)) | `WEATHER` |
 
-`exakit data-load` offers the bundled datasets not yet loaded and a local CSV or Parquet file; `exakit data-load --force` reloads the bundled ones. Uploads land in the `STARTER_KIT` schema. One-liner:
-
 ```bash
-exapump upload yourfile.csv --table STARTER_KIT.MYTABLE -p starter-kit
+exakit data-load             # bundled datasets not yet loaded, or your own data
+exakit data-load --force     # reload the bundled datasets
 ```
 
-Details: [what's included](data/README.md) · [data dictionary](data/data-dictionary.md) · [14 example questions with reference SQL](data/example-questions.md)
+Your own data can be CSV, Parquet or JSON files, or a folder of them, one table each (JSON through the JSON Tables add-on, offered when needed). Uploads land in the `STARTER_KIT` schema. Details: [what's included](data/README.md) · [data dictionary](data/data-dictionary.md) · [14 example questions with reference SQL](data/example-questions.md)
 
 ## More ways to connect
 
