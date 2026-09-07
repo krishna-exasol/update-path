@@ -179,7 +179,11 @@ check "steps_missing lists the four unfinished steps" "exapump,mcp,pyexasol,exak
     "$(printf '%s' "$_sj" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps_missing"]))' 2>/dev/null)"
 check "remedies.mcp is exakit mcp-setup" "exakit mcp-setup" "$(printf '%s' "$_sj" | python3 -c 'import json,sys; print(json.load(sys.stdin)["remedies"]["mcp"])' 2>/dev/null)"
 check "remedies.pyexasol is exakit update" "exakit update" "$(printf '%s' "$_sj" | python3 -c 'import json,sys; print(json.load(sys.stdin)["remedies"]["pyexasol"])' 2>/dev/null)"
-check "a stopped database still ranks first in the hoisted remedy" "exakit start" "$(printf '%s' "$_sj" | python3 -c 'import json,sys; print(json.load(sys.stdin)["remedy"])' 2>/dev/null)"
+# This fixture's runtime does not EXIST (the container is absent), so the
+# database remedy is the installer, not "exakit start" - which was the
+# pre-runtime remedy bug this suite used to pin as correct. The property under
+# test is unchanged: the database's remedy outranks the unfinished steps'.
+check "the missing database still ranks first in the hoisted remedy" "re-run the installer (it resumes at the unfinished step)" "$(printf '%s' "$_sj" | python3 -c 'import json,sys; print(json.load(sys.stdin)["remedy"])' 2>/dev/null)"
 _sj_full="$(python3 - "$EXAKIT_MANIFEST" "$CLI" <<'PY'
 import json, os, subprocess, sys
 manifest, cli = sys.argv[1:3]

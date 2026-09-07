@@ -823,6 +823,13 @@ exakit_failure_note_file() {
 # Never fails: a note is a nicety, and losing it must not turn a soft failure
 # into a hard one.
 exakit_note_failure() {
+    # A READ-ONLY state query must never write state. status --json surfaces
+    # this note as last_failure - "a step of your install did not finish" -
+    # and a probe that dies inside status/version/info/mcp-doctor is not that:
+    # recording it left a permanent "install failure" on a machine where
+    # nothing was installed wrong, re-written on every poll. The read-only
+    # commands raise this flag; everything they call inherits it.
+    [ "${EXAKIT_READONLY_QUERY:-0}" = "1" ] && return 0
     _nf_file="$(exakit_failure_note_file)"
     [ -d "$(dirname "$_nf_file")" ] || return 0
     # Line 1 stays the reason, byte for byte: every existing reader takes
@@ -4923,12 +4930,37 @@ with open(sys.argv[1], encoding="utf-8") as handle:
         if not line:
             continue
         comp, ver, avail, status, sev, maint, note = (line.split("\t") + [""] * 7)[:7]
+        # The raw cell doubles as the HUMAN Action column, so it carried
+        # whatever a human should do next - "exakit marketplace",
+        # "2.2.0 available (repair)" - which is a command or a sentence, not a
+        # status. The JSON key gets a fixed vocabulary a parser can switch on,
+        # and the action moves to a per-row remedy that is runnable as-is.
+        if status == "current":
+            row_status, remedy = "current", None
+        elif status == "none":
+            # Installed is ahead of the published set; nothing to do.
+            row_status, remedy = "ahead", None
+        elif status == "-":
+            row_status, remedy = "unsupported", None
+        elif status == "inspect":
+            row_status, remedy = "unknown", None
+        elif status == "exakit marketplace":
+            row_status, remedy = "available", "exakit marketplace %s" % comp
+        elif status.startswith("update exakit first"):
+            row_status, remedy = "blocked_on_kit", "exakit update exakit"
+        elif status.endswith("available (repair)"):
+            row_status, remedy = "missing", "exakit update %s" % comp
+        elif status.endswith("available"):
+            row_status, remedy = "update_available", "exakit update %s" % comp
+        else:
+            row_status, remedy = status, None
         rows.append({
             "component": comp,
             "installed": None if ver in ("not installed", "not available", "") else ver,
             "installed_label": ver,
             "advertised": None if avail in ("unknown", "") else avail,
-            "status": status,
+            "status": row_status,
+            "remedy": remedy,
             "severity": sev or "normal",
             "note": maint or None,
             "platform_note": note or None,

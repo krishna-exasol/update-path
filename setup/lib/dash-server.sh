@@ -650,6 +650,15 @@ dash_server_log_path() {
 # dash_server_status — running | stopped | not installed. The HTTP probe is the
 # truth: the process may have been started by launchd, by the user in a
 # terminal, or by exakit, and only one of those leaves a pidfile.
+# dash_server_url — the one address everything about this add-on hangs off.
+# A convention hook (_exakit_addon_fn <id> url): status --json surfaces it, so
+# an agent finally has a JSON key for the URL instead of parsing the human
+# screen or guessing the port.
+dash_server_url() {
+    _dash_server_resolve_port
+    printf 'http://127.0.0.1:%s\n' "$EXAKIT_DASH_SERVER_PORT"
+}
+
 dash_server_status() {
     _dash_server_resolve_port
     if [ ! -x "$EXAKIT_DASH_SERVER_BIN" ]; then

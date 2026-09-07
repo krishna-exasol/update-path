@@ -122,14 +122,31 @@ _runtime_type() {
     manifest_get runtime.type 2>/dev/null
 }
 
+# _require_install [json:0|1] — with 1, a caller that was ASKED for JSON
+# answers in JSON even for "not installed": a bare die left stdout empty and a
+# human error card on stderr, so the parser on the other end read "Expecting
+# value: line 1 column 1" on exactly the path where structured signal matters.
 _require_install() {
+    _ri_json="${1:-0}"
     # Logging FIRST. Every caller used to run this check and only then call
     # exakit_init_logging, so a failure here wrote .last-failure and produced
     # no log at all — leaving `exakit logs`, the diagnostic AGENTS.md points at,
     # with nothing to show for the failure that just happened.
     exakit_init_logging 2>/dev/null || true
-    [ -f "$EXAKIT_MANIFEST" ] || die "No installation found. Run the installer first."
-    [ -n "$(_runtime_type)" ] || die "No runtime recorded in the manifest yet."
+    if [ ! -f "$EXAKIT_MANIFEST" ]; then
+        if [ "$_ri_json" = "1" ]; then
+            printf '{"ok": false, "installed": false, "error": "no installation found", "remedy": "run the installer"}\n'
+            exit 4
+        fi
+        die "No installation found. Run the installer first."
+    fi
+    if [ -z "$(_runtime_type)" ]; then
+        if [ "$_ri_json" = "1" ]; then
+            printf '{"ok": false, "installed": true, "error": "no runtime recorded in the manifest yet", "remedy": "re-run the installer (it resumes at the unfinished step)"}\n'
+            exit 3
+        fi
+        die "No runtime recorded in the manifest yet."
+    fi
 }
 
 # _not_installed_answer <json:0|1> — the not-installed answer for a STATE QUERY.
@@ -261,10 +278,19 @@ cmd_status() {
         # Composed in Python so every value is escaped properly; the service
         # map is passed pre-joined because the registry drives it.
         _cs_services=""
+        _cs_urls=""
         for _st_id in $(exakit_service_ids 2>/dev/null); do
             [ "$_st_id" = "database" ] && continue
             _cs_services="${_cs_services}${_st_id}=$(exakit_service_status "$_st_id")
 "
+            # A service that knows its address says so through the `url` hook,
+            # and the JSON carries it - an agent could not get dash-server's
+            # URL from any machine-readable surface before this.
+            _cs_url_fn="$(_exakit_addon_fn "$_st_id" url)"
+            if command -v "$_cs_url_fn" >/dev/null 2>&1; then
+                _cs_urls="${_cs_urls}${_st_id}=$("$_cs_url_fn" 2>/dev/null || true)
+"
+            fi
         done
         # The last recorded failure, if one is still pending. The human screen
         # already prints "pyexasol: not installed — repair: exakit update
@@ -279,9 +305,9 @@ cmd_status() {
             _cs_note_at="$(sed -n '2p' "$EXAKIT_HOME/.last-failure" 2>/dev/null || true)"
         fi
         run_python - "$(manifest_get kit_level 2>/dev/null)" "${_type:-}" "$_cs_db"             "${_cs_autostart:-false}" "$_cs_datasets" "${_cs_pyx:-}" "$EXAKIT_MANIFEST"             "$(manifest_get steps_completed 2>/dev/null)" "$_cs_services" "$_cs_note" "$_cs_note_at" \
-            "$_cs_installing" "$_cs_step" <<'EXAKIT_SJ_PY'
+            "$_cs_installing" "$_cs_step" "$_cs_urls" <<'EXAKIT_SJ_PY'
 import json, sys
-kit, rtype, db, autostart, datasets, pyx, manifest, steps, services, note, note_at, installing, step = sys.argv[1:14]
+kit, rtype, db, autostart, datasets, pyx, manifest, steps, services, note, note_at, installing, step, urls = sys.argv[1:15]
 installing = installing == "1"
 try:
     steps_list = json.loads(steps) if steps else []
@@ -292,6 +318,12 @@ for line in services.splitlines():
     if "=" in line:
         key, value = line.split("=", 1)
         smap[key] = value
+umap = {}
+for line in urls.splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        if value:
+            umap[key] = value
 running = db.startswith("running")
 # Remedies are additive: an agent should never have to infer the fix from a
 # null, and should never have to parse the human screen to find one.
@@ -301,10 +333,15 @@ if not pyx:
 if not running:
     # "exakit start" is the wrong remedy for an INTERRUPTED deployment: it fails
     # identically every time, which is how an agent ends up looping on it. The
-    # runtime reports that state distinctly so the remedy can differ.
-    remedies["database"] = (
-        "exakit repair-runtime" if db.startswith("interrupted") else "exakit start"
-    )
+    # runtime reports that state distinctly so the remedy can differ. And with
+    # NO runtime at all, "exakit start" has nothing to start - only the
+    # installer can create one, so that is the remedy an agent is handed.
+    if db.startswith("interrupted"):
+        remedies["database"] = "exakit repair-runtime"
+    elif db.startswith("not installed"):
+        remedies["database"] = "re-run the installer (it resumes at the unfinished step)"
+    else:
+        remedies["database"] = "exakit start"
 if db.startswith("conflict"):
     # Something else is on the SQL port. `exakit start` cannot help until it is gone.
     remedies["database"] = "another process is listening on the database port — stop it, then: exakit start"
@@ -329,6 +366,17 @@ if not installing:
         if step_id not in steps_list:
             steps_missing.append(step_id)
             remedies.setdefault(step_id, fix)
+# "installed": true beside "status": "not installed" was one object
+# contradicting itself: `installed` answers for the KIT, the runtime string
+# answers for the DATABASE, and the runtime's phrasing leaked into the
+# top-level key. The kit-level status says "no database" instead; the verbatim
+# runtime string stays under runtime.status where it has always been.
+if installing:
+    top_status = "installing"
+elif db.startswith("not installed"):
+    top_status = "no database"
+else:
+    top_status = db
 payload = {
     "installed": True,
     # Top-level `status` and `remedy` are the keys EVERY --json answer from a
@@ -336,13 +384,16 @@ payload = {
     # db-not-running answer in cmd_mcp_doctor). runtime.status stays exactly
     # where it was; this is the one field a parser can read without first
     # knowing which of the three shapes it received.
-    "status": "installing" if installing else db,
+    "status": top_status,
     "installing": installing,
     "install_step": (step or None) if installing else None,
     "kit_level": kit or None,
     "runtime": {"type": rtype or None, "status": db},
     "running": running,
     "services": smap,
+    # Per-service addresses, from each module's own `url` hook: the JSON key
+    # an agent reads for "where is dash-server?" instead of scraping a screen.
+    "urls": umap,
     "autostart": autostart == "true",
     "datasets_loaded": datasets.split() if datasets else [],
     "steps_completed": steps_list,
@@ -584,6 +635,9 @@ EXAKIT_CS_SOFT
         case "$_cs_db" in
             interrupted*) _cs_row 'Repair it:' 'exakit repair-runtime   (replaces the database; its data is not recoverable)' ;;
             conflict*)    _cs_row 'Free the port:' 'another process is listening on the database port — stop it, then: exakit start' ;;
+            # No runtime at all: `exakit start` has nothing to start, and
+            # prescribing it loops the reader. Only the installer creates one.
+            'not installed'*) _cs_row 'Deploy it:' 're-run the installer (it resumes at the unfinished step)' ;;
             *)            _cs_row 'Start it:' 'exakit start' ;;
         esac
         exit 3
@@ -1357,14 +1411,16 @@ EXAKIT_SQL_REJECT_PY
 }
 
 cmd_sql() {
-    _require_install
     _sql_write=0
     _sql_json=0
     # Known before the arguments are walked, so a refusal raised WHILE walking
-    # them (an unknown option, two statements) already answers in JSON.
+    # them (an unknown option, two statements) already answers in JSON — and so
+    # the install check below can answer in JSON too, instead of a human error
+    # card on the machine-readable path.
     for _sql_pre in "$@"; do
         case "$_sql_pre" in --json|-j) _sql_json=1 ;; esac
     done
+    _require_install "$_sql_json"
     _sql_text=""
     _sql_file=""
     _sql_expect_file=0
@@ -1422,6 +1478,21 @@ cmd_sql() {
         case "$(printf '%s' "$_sql_probe" | sed 's/;* *$//')" in
             *";"*) _sql_reject "Only one statement at a time. A trailing ';' is fine; a second statement is not." ;;
         esac
+    fi
+
+    # With exapump missing, the run below exited 127 and bash's own "No such
+    # file or directory" line - a line-number message about this script, not
+    # the database - became the JSON error field. Answer the contract instead:
+    # a real reason, the repair command, and the incomplete-install exit code.
+    _sql_bin="$(exapump_cli)"
+    if [ ! -x "$_sql_bin" ]; then
+        if [ "$_sql_json" -eq 1 ]; then
+            printf '{"ok": false, "error": "exapump (the SQL client) is not installed", "remedy": "exakit update"}\n'
+        else
+            error "exapump (the SQL client) is not installed."
+            info "Repair it with: exakit update"
+        fi
+        exit 3
     fi
 
     if [ "$_sql_json" -eq 1 ]; then
@@ -1613,6 +1684,16 @@ _exakit_refuse_unknown_options() {
         esac
     done
 }
+
+# State QUERIES are read-only by contract: no probe they run - however it
+# fails - may write the .last-failure note that status --json then reports as
+# an install failure forever. exakit_note_failure honours the flag, and every
+# child process inherits it. (A separate case, not a ;;& fall-through arm:
+# that is bash 4.0 syntax and this file must run on the 3.2 macOS ships.)
+case "${1:-help}" in
+    status|version|--version|-v|info|mcp-status|mcp-doctor|skills|catalog|logs|help|--help|-h|whats-new)
+        export EXAKIT_READONLY_QUERY=1 ;;
+esac
 
 case "${1:-help}" in
     preflight) shift; _exakit_refuse_unknown_options preflight "" "$@"; _with_notice preflight_report ;;
