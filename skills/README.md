@@ -35,7 +35,7 @@ user's request actually needs, not a manual for the whole kit.
 | [`exasol-mcp`](exasol-mcp/SKILL.md) | Connecting AI clients over MCP, diagnosing `mcp-doctor`, repairing config drift, proving the read-only user really is read-only. |
 | [`exasol-pyexasol`](exasol-pyexasol/SKILL.md) | Querying the database from Python — the right interpreter, the TLS setting the self-signed certificate needs, reading credentials safely. |
 
-**The wider ecosystem** — not part of this kit
+**The wider Exasol ecosystem** — installed with the kit; it catalogs tools that are *not* part of it
 
 | Skill | Use it when… |
 |---|---|
@@ -43,7 +43,7 @@ user's request actually needs, not a manual for the whole kit.
 
 **The marketplace** — opt-in add-ons
 
-The three add-on skills below are **installed with their add-on**, not with the
+The four add-on skills below are **installed with their add-on**, not with the
 kit: each declares `addon: <id>` in its frontmatter, and the marketplace places
 it as part of installing that add-on and removes it again when the add-on goes.
 A skill is a set of triggers for an agent to match on, and matching them for a
