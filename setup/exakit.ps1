@@ -1140,6 +1140,10 @@ function Invoke-ExakitUninstallComponent {
     param([Parameter(Mandatory)][string]$Key)
     switch ($Key) {
         "database" {
+            # Twin of the shared-engine note in _exakit_uninstall_component:
+            # Windows and WSL share one Docker engine, so this may be the
+            # database the WSL side installed and still uses.
+            Warn2 "Windows and WSL share one Docker engine: removing this container and volume removes the database for BOTH sides."
             Info "Removing the local Exasol Nano deployment and all data"
             try { Remove-Nano -Data } catch { Warn2 "Database removal reported errors" }
             Remove-ExakitStepDone "runtime"

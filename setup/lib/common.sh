@@ -9704,10 +9704,20 @@ _exakit_uninstall_component() {
     case "$_uc_key" in
         database)
             _uc_type="$(manifest_get runtime.type 2>/dev/null || true)"
+            # Windows and WSL share one Docker engine: the container and the
+            # data volume being removed here may be the database the OTHER
+            # side installed and still uses. Say so before it is gone — the
+            # other side's kit has no way to warn from here.
+            _uc_shared=""
+            case "$(detect_os)" in
+                wsl|windows) _uc_shared=" (Windows and WSL share one Docker engine — if the other side installed this database, this removes it for both)" ;;
+            esac
             if [ "$_uc_dry" = "1" ]; then
-                info "  will remove: the local Exasol $_uc_type deployment and ALL its data"
+                info "  will remove: the local Exasol $_uc_type deployment and ALL its data$_uc_shared"
                 return 0
             fi
+            [ -n "$_uc_shared" ] && [ "$_uc_type" = "nano" ] && \
+                warn "Windows and WSL share one Docker engine: removing this container and volume removes the database for BOTH sides."
             info "Removing the local Exasol $_uc_type deployment and all data"
             case "$_uc_type" in
                 nano)     nano_teardown --data     || warn "Database removal reported errors" ;;
