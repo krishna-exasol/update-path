@@ -129,13 +129,15 @@ Health check any time: `exakit mcp-doctor`.
 
 ## Let an AI assistant drive the kit (the skills)
 
-The kit ships **AI skills** — `SKILL.md` recipes that teach an agent (Claude Code, Codex, Cursor, or any tool that reads the open skill standard) how to operate it. There is one per thing the agent has to drive, so only the relevant one loads: the starter flow, then the database runtime, exapump, MCP, pyexasol, and each marketplace add-on.
+The kit ships **AI skills**: small `SKILL.md` recipes that teach an agent (Claude Code, Codex, Cursor, or any tool that reads the open skill standard) how to operate it. One skill per thing the agent has to drive, so only the relevant one loads: setup and the first query, the database, exapump, MCP, pyexasol, and one per add-on.
+
+The installer places them where agents look (`~/.claude/skills/`, `~/.agents/skills/`). Nothing to run. In a **fresh** agent session, say **"setup starter kit"** and it takes over; or ask for anything the kit does ("load this JSON file", "build me a dashboard", "query Exasol from Python") and the matching skill fires on its own.
 
 ```bash
-exakit skills             # what this kit carries, and what is installed
+exakit skills             # the set, whether each is placed, and the next command if one is needed
 ```
 
-The installer places the skills into each agent's discovery folder (`~/.claude/skills/`, `~/.agents/skills/`). The set is versioned like every other component: when the maintainers publish a newer one, `exakit update` fetches and installs it in seconds. In a **fresh** agent session, say **"setup starter kit"** and it takes over — or ask for anything else the kit does ("load this JSON file", "build me a dashboard", "query Exasol from Python") and the matching skill fires on its own. See [`skills/README.md`](skills/README.md) for the full index, and [`skills/reducing-agent-prompts.md`](skills/reducing-agent-prompts.md) if the agent asks for approval too often.
+The skill set is versioned. When the maintainers publish a newer one, `exakit version` and `exakit info` say so and `exakit update` fetches it in seconds, no kit release needed. Full index: [skills/README.md](skills/README.md). If the agent asks for approval too often: [skills/reducing-agent-prompts.md](skills/reducing-agent-prompts.md).
 
 ## The workflow this kit teaches
 
@@ -151,23 +153,17 @@ The kit ships **three bundled datasets**, each in its own schema, so your AI cli
 
 | Dataset | What it is | Schema |
 |---|---|---|
-| **TPC-H retail** | The standard wholesale/retail model: customers, orders, line items, parts, suppliers (~175k rows, ~21 MB) | `TPCH` |
+| **TPC-H retail** | The standard wholesale/retail model: customers, orders, line items, parts, suppliers (~175k rows, ~21 MB) ([data/datasets/tpch](data/datasets/tpch)) | `TPCH` |
 | **Smart&#8209;meter&nbsp;energy&nbsp;readings** | A ~108k-row time series ([data/datasets/energy](data/datasets/energy)) | `ENERGY` |
 | **Daily&nbsp;city&nbsp;weather&nbsp;history** | ~11k rows ([data/datasets/weather](data/datasets/weather)) | `WEATHER` |
 
-Run `exakit data-load` for the same checkbox menu as the installer. It lists every bundled dataset **not yet loaded** (checked against the live database, not a flag), a **local CSV or Parquet file** option, and Cancel. Once everything bundled is loaded, only the local-file and Cancel options remain. `exakit data-load --force` reloads the bundled sample data. One-liner alternative:
+`exakit data-load` offers the bundled datasets not yet loaded and a local CSV or Parquet file; `exakit data-load --force` reloads the bundled ones. Uploads land in the `STARTER_KIT` schema. One-liner:
 
 ```bash
 exapump upload yourfile.csv --table STARTER_KIT.MYTABLE -p starter-kit
 ```
 
-Your uploads go to the `STARTER_KIT` schema by default.
-
-**More detail:**
-
-- [data/README.md](data/README.md): what's included and how to regenerate at a different size
-- [data/data-dictionary.md](data/data-dictionary.md): every table and column, with types, keys, and the revenue formula
-- [data/example-questions.md](data/example-questions.md): 14 ready-to-ask questions with validated reference SQL
+Details: [what's included](data/README.md) · [data dictionary](data/data-dictionary.md) · [14 example questions with reference SQL](data/example-questions.md)
 
 ## More ways to connect
 
@@ -196,7 +192,7 @@ exakit help            # every command
 
 Something failed mid-install? Re-run the install command. It picks up where it left off.
 
-## Optional add-ons: the marketplace
+## Add-ons: the marketplace
 
 The install stays minimal on purpose; extras live in the marketplace. At the
 end of a successful install the kit asks once whether to add any — or browse
@@ -213,52 +209,57 @@ build your own add-on: [MARKETPLACE.md](MARKETPLACE.md).
 
 ## Staying up to date
 
-The kit tracks a **tested set** of versions, not the newest of everything. The
-maintainers publish that set, and your machine reads it — so an update means
-"move to the combination we verified together", never "hope four independent
-releases work with each other".
+The maintainers publish one **tested set** of versions, `versions.json` on the
+kit repository's `main` branch: the kit scripts, the database runtime, exapump,
+the MCP server, pyexasol, the agent skills and every add-on. Your machine reads
+that file (refreshed at most once a day, cached for offline use) and compares it
+with what is installed. An update therefore means "move to the combination the
+maintainers verified together", never "hope independent releases work with each
+other".
 
-`exakit update` applies the quick components (kit scripts, exapump, MCP server,
-pyexasol) in seconds. If a **database** update is waiting it asks you first,
-because that one stops the database for a minute or two:
-
+```bash
+exakit version           # one row per component: installed, advertised, status
+exakit version --json    # the same as one object
+exakit update            # apply everything that is pending
 ```
-? Stop the database and update the runtime now? [y/N]
-```
 
-Answer `y` and it does the whole job — stops the database, updates the runtime,
-brings it back up and tells you it is running again. Answer `n` and nothing is
-stopped; `exakit update` applies it whenever you like. Your data is kept
-either way: the update reuses the same data volume, and the previous version is
-put back if the new one does not come up.
+What `exakit update` does, in order:
 
-In a script, a pipe or CI there is nobody to ask, so the database update is
-**never** started on its own — it is deferred exactly as above. Opt in
-deliberately with `exakit update --yes` (or `EXAKIT_CONFIRM_RUNTIME_UPDATE=1`).
+1. **The kit itself.** When a newer kit version is advertised, it downloads the
+   kit repository's `main` archive, replaces the kit scripts, keeps the previous
+   copy beside them (`~/.exasol-starter-kit/kit.backup-<timestamp>`), refreshes
+   the agent skills and shows a "What's new" card for every version you crossed.
+   Database data, credentials and MCP client configs are not touched.
+2. **The database runtime.** This one stops the database for a minute or two, so
+   it **asks first**, and in a script, a pipe or CI, where nobody can answer, it is
+   never started on its own. Opt in with `exakit update --yes` (or
+   `EXAKIT_CONFIRM_RUNTIME_UPDATE=1`). Your data is kept: the update reuses the
+   same data volume, and the previous version is put back if the new one does not
+   come up.
+3. **exapump, the MCP server, pyexasol** in seconds, digest-verified, no downtime.
+4. **The agent skills.** The skill set has its own version. When the maintainers
+   bump it, `exakit update` fetches the new set from `main` and places it, no kit
+   release needed.
+5. **Installed add-ons**, each through its own module.
 
-```
-Component  Installed         Tagged            Severity    Action
-exakit     0.2.1             0.2.1             -           current
-nano       2026.2.0-nano.2   2026.2.0-nano.3   -           exakit update (heavy)
-exapump    0.11.3            0.12.0            recommended exakit update
-mcp        2.1.0             2.1.0             -           current
-pyexasol   2.3.2             2.3.2             -           current
-```
+Anything already current is skipped; "Everything is already current" means
+exactly that.
 
 A few things worth knowing:
 
-- **Severity is the maintainers' judgement.** Only `recommended` and `critical`
-  changes ever interrupt another command, at most once a day, on `stderr`.
-  Silence them for good with `EXAKIT_NO_UPDATE_NOTICE=1`.
-- **`Tagged` is the version set the maintainers tested together.** It is usually
-  the newer number, but not always: if a release is withdrawn the tagged version
-  goes *down*, and a machine already on the higher one simply shows both numbers
-  with an action of `none`. The kit never moves a component backwards.
-- **Offline is fine.** Version resolution falls back to a cached copy, then to the
-  copy that shipped with your kit. No command ever fails because an update check
+- **You are told, quietly.** When a pending update is `recommended` or `critical`,
+  one dim line appears after another command, at most once a day. `normal`
+  updates never interrupt. `EXAKIT_NO_UPDATE_NOTICE=1` turns the line off.
+- **The kit never moves a component backwards.** If a release is withdrawn and
+  the tested version goes down, a machine already on the higher one shows both
+  numbers and nothing changes.
+- **Offline is fine.** Version resolution falls back to the cached copy, then to
+  the copy that shipped with your kit. No command fails because the update check
   could not reach the network.
-- **You can still pick your own versions.** `EXAKIT_EXAPUMP_VERSION=0.11.2 exakit
-  update exapump` installs exactly that, digest-verified like anything else.
+- **Fresh installs always get the tested set**, because the installer reads the
+  same file. `EXAKIT_VERSION_POLICY=latest` resolves each component from its own
+  upstream instead; `pinned` uses the kit's built-in fallbacks and touches no
+  network. `EXAKIT_VERSIONS_URL` points at a different `versions.json`.
 
 ## Safety and operations
 
@@ -291,9 +292,8 @@ https://github.com/user-attachments/assets/77916db0-d273-4720-8d59-1aedac95d5e8
 | Port&nbsp;8563&nbsp;already&nbsp;taken? | `EXAKIT_DB_PORT=8564` before the install command. |
 | Behind&nbsp;a&nbsp;corporate&nbsp;proxy? | `export HTTPS_PROXY=...` and re-run. |
 | Where's&nbsp;the&nbsp;deep-dive&nbsp;for&nbsp;my&nbsp;OS? | [macOS](quickstarts/macos.md) · [WSL](quickstarts/windows-wsl.md) · [Windows + Docker](quickstarts/windows-docker.md) |
-| Step-by-step&nbsp;to&nbsp;the&nbsp;first&nbsp;query? | [QUICKSTART](QUICKSTART.md) → [First workflow](demo/first-revenue-analysis.md) |
 | Installing&nbsp;over&nbsp;a&nbsp;database<br>I&nbsp;already&nbsp;have? | **It is adopted, not replaced.** A running database is reused (the installer asks, and defaults to yes); a stopped one is started and reused. Your data is untouched. Only a database that cannot start at all is replaced, and the installer says so first — including that the previous data is not recoverable. |
-| How&nbsp;do&nbsp;updates&nbsp;work? | The maintainers publish a tested version set; `exakit version` compares it against what you have and `exakit update` applies the quick parts in seconds. See [Staying up to date](#staying-up-to-date). |
+| How&nbsp;do&nbsp;updates&nbsp;work? | The maintainers publish one tested set of versions. `exakit version` shows what is pending; `exakit update` applies it. See [Staying up to date](#staying-up-to-date). |
 | How&nbsp;do&nbsp;I&nbsp;remove&nbsp;everything? | `exakit uninstall` |
 
 ---
