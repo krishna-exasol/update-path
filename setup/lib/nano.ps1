@@ -868,20 +868,31 @@ function Repair-NanoCredentials {
     return $true
 }
 
-# Get-ExakitWslPortPublisher <port> - the name of a container inside the default
-# WSL distro that publishes <port>, or "". Asks podman and docker there (either
-# may be absent); wsl.exe answers in UTF-16, hence the NUL strip. Bounded, so a
-# hung distro cannot stall the install.
+# Get-ExakitWslPortPublisher <port> - the name of a rootless podman container
+# inside the default WSL distro that publishes <port>, or "". Podman only: a
+# docker inside the distro is Docker Desktop's shared engine (the same one
+# Windows uses, which adoption already handles) or the Windows CLI over interop.
+# wsl.exe answers in UTF-16, hence the NUL strip. Bounded, so a hung distro
+# cannot stall the install.
 function Get-ExakitWslPortPublisher {
     param([Parameter(Mandatory)][int]$Port)
     try {
         $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
         if (-not $wsl) { return "" }
-        $probe = "for e in podman docker; do command -v `$e >/dev/null 2>&1 && `$e ps --format '{{.Names}} {{.Ports}}' 2>/dev/null; done; true"
-        $out = Invoke-ExakitBounded -FilePath $wsl.Source -Arguments @("--", "sh", "-c", $probe) -TimeoutSeconds 10
-        if (-not $out) { return "" }
-        foreach ($line in (("$out" -replace "`0", "") -split "`r?`n")) {
-            if ($line -match ":$Port->") { return (($line.Trim() -split '\s+')[0]) }
+        # No shell variables: wsl.exe hands its command line to the distro's
+        # default shell, which expands them BEFORE the inner shell runs (a
+        # `for e in ...; $e ps` loop ran Linux ps with an empty name). A login
+        # shell first: rootless podman needs the session environment the
+        # profile sets up, and in a bare `sh -c` it lists nothing.
+        $probe = "podman ps --format '{{.Names}} {{.Ports}}' 2>/dev/null; true"
+        foreach ($shell in @("bash -lc", "sh -c")) {
+            # Verbatim: wsl.exe wants a bare -- and the shell wants ONE quoted
+            # command; the probe itself carries no double quotes.
+            $out = Invoke-ExakitBounded -FilePath $wsl.Source -ArgumentString ('-- ' + $shell + ' "' + $probe + '"') -TimeoutSeconds 15
+            if (-not $out) { continue }
+            foreach ($line in (("$out" -replace "`0", "") -split "`r?`n")) {
+                if ($line -match ":$Port->") { return (($line.Trim() -split '\s+')[0]) }
+            }
         }
     } catch { }
     return ""

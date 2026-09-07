@@ -1753,6 +1753,7 @@ function Invoke-ExakitBounded {
     param(
         [Parameter(Mandatory)][string]$FilePath,
         [string[]]$Arguments = @(),
+        [string]$ArgumentString = "",
         [int]$TimeoutSeconds = 8
     )
     $info = New-Object System.Diagnostics.ProcessStartInfo
@@ -1765,6 +1766,10 @@ function Invoke-ExakitBounded {
         $quoted += '"' + ($argument -replace '"', '\"') + '"'
     }
     $info.Arguments = ($quoted -join " ")
+    # -ArgumentString is taken verbatim, for the one caller whose target parses
+    # its own command line: wsl.exe does not accept a quoted "--" as its
+    # separator and ran the whole probe as a Linux command named "--".
+    if ($ArgumentString) { $info.Arguments = $ArgumentString }
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
     $info.UseShellExecute = $false

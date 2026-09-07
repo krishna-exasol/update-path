@@ -2268,6 +2268,11 @@ function Invoke-CmdMcpOperation {
     Assert-ExakitInstalled
     Initialize-ExakitLogging
     if (-not (Invoke-McpOperation -Operation $Operation -InputArgs $OpArgs)) {
+        # In --json mode the report IS the answer: the Fail card would land on
+        # stdout after the object (the host writes Write-Host there when
+        # redirected) and break every parser with "extra data". Exit 1 quietly;
+        # the report's status and remedy already say what is wrong.
+        if ($env:EXAKIT_MCP_RESULT_JSON -eq "1") { exit 1 }
         Fail "Could not complete MCP $Operation"
     }
 }
