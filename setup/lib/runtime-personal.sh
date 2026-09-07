@@ -752,7 +752,13 @@ personal_wait_ready() {
 
 personal_record_manifest() {
     manifest_set runtime.type "personal"
-    manifest_set runtime.version "$EXAKIT_PERSONAL_VERSION"
+    # The version of the deployment ON DISK, whenever its state can say —
+    # never the version this kit merely advertises. Reusing or adopting an
+    # existing deployment used to record the advertised number over it, after
+    # which every version answer, update check and outranks-guard reasoned
+    # from a launcher version the deployment never had.
+    _prm_ver="$(personal_deployed_version 2>/dev/null || true)"
+    manifest_set runtime.version "${_prm_ver:-$EXAKIT_PERSONAL_VERSION}"
     manifest_set runtime.launcher "$(personal_cli)"
     manifest_set runtime.deployment_dir "$EXAKIT_PERSONAL_DEPLOY_DIR"
 

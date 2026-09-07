@@ -494,8 +494,10 @@ function Get-ExakitDbErrorRemedy {
     # starter-kit`, which connects as admin - is the one thing that breaks the
     # trust model. Say so where the error appears, not only in the docs.
     if ($Text -match '(?i)insufficient privileges' -or $Text -match '42500') {
-        $lines += "That write was refused by the DATABASE: the MCP user is read-only by design, and this is the guardrail working as intended."
-        $lines += "Do NOT re-run it through 'exapump -p starter-kit' - that profile is the ADMIN user and is not sandboxed. If a write is genuinely wanted, say so and let the user decide."
+        # Written for BOTH readers - the person at the terminal and an agent
+        # driving the CLI. Twin of the same rewrite in common.sh.
+        $lines += "That write was refused by the DATABASE: the connection that ran it is read-only by design - the guardrail working as intended."
+        $lines += "To run a write deliberately, use the admin path: exakit sql --write '<statement>'. Never route it through 'exapump -p starter-kit' by reflex - that profile is the ADMIN user and is not sandboxed."
     }
     return $lines
 }

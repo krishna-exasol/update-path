@@ -82,9 +82,9 @@ You already use AI. The hard part is trusting it with your data. This kit gives 
 
 | Your machine | Minimum Requirements | That's all |
 |---|---|---|
-| **macOS** | 8 GB+ RAM, 20 GB free disk | The database runs natively |
-| **Linux / WSL** | Docker or Podman (running), 4 GB+ RAM | Container runtime required |
-| **Windows** | Docker Desktop (running), 4 GB+ RAM | Native Windows uses the PowerShell installer |
+| **macOS** | 8 GB+ RAM, 20 GB free disk | Runs in a lightweight managed VM — no Docker to install |
+| **Linux / WSL** | Docker or Podman (running), 4 GB+ RAM, ~10 GB free disk where the engine keeps its data (plus ~3 GB at your home) | Container runtime required |
+| **Windows** | Docker Desktop (running), 4 GB+ RAM, ~10 GB free disk where Docker keeps its data (plus ~3 GB on the system drive) | Native Windows uses the PowerShell installer |
 
 **No Python install needed** on any platform: the kit uses a system Python 3.11+ when it finds one, and otherwise installs a managed Python for its own use.
 
@@ -192,7 +192,7 @@ exakit version    # installed, recommended and status, one row per component
 exakit update     # apply everything that is pending
 ```
 
-`exakit update` refreshes the kit scripts, exapump, the MCP server, pyexasol, the agent skills and installed add-ons in seconds, with no downtime. A database runtime update stops the database for a minute or two, so it asks first and never runs unattended (opt in with `exakit update --yes`). Data, credentials and MCP configs are never touched, the previous kit copy is kept, and the kit never moves a component backwards.
+`exakit update` refreshes the kit scripts, exapump, the MCP server, pyexasol, the agent skills and installed add-ons in seconds, with no downtime. When any update is pending, one dim line appears after other commands. Silence it for good with `EXAKIT_NO_UPDATE_NOTICE=1`, or throttle it with `EXAKIT_NOTICE_INTERVAL=86400` for at most one notice a day. A database runtime update stops the database for a minute or two, so it asks first and never runs unattended (opt in with `exakit update --yes`). Data, credentials and MCP configs are never touched, the previous kit copy is kept, and the kit never moves a component backwards.
 
 ## Safety and operations
 

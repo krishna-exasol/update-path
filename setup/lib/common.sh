@@ -988,8 +988,13 @@ exakit_db_error_remedy() {
     # trust model. Say so where the error appears, not only in the docs.
     case "$1" in
         *"insufficient privileges"*|*"42500"*)
-            printf '%s\n' "That write was refused by the DATABASE: the MCP user is read-only by design, and this is the guardrail working as intended."
-            printf '%s\n' "Do NOT re-run it through 'exapump -p starter-kit' — that profile is the ADMIN user and is not sandboxed. If a write is genuinely wanted, say so and let the user decide."
+            # Written for BOTH readers of this stream — the person at the
+            # terminal and an agent driving the CLI. "Say so and let the user
+            # decide" addressed only the agent, so the human it was printed to
+            # was handed a message about themselves in the third person with
+            # no action in it.
+            printf '%s\n' "That write was refused by the DATABASE: the connection that ran it is read-only by design — the guardrail working as intended."
+            printf '%s\n' "To run a write deliberately, use the admin path: exakit sql --write '<statement>'. Never route it through 'exapump -p starter-kit' by reflex — that profile is the ADMIN user and is not sandboxed."
             ;;
     esac
     return 0
@@ -1155,7 +1160,12 @@ exakit_ensure_uv() {
         EXAKIT_UV_BIN="$EXAKIT_BIN_DIR/uv"
         return 0
     fi
-    info "Installing the managed Python bootstrapper (uv)"
+    # Narration to STDERR, always: this bootstrap runs lazily from inside
+    # run_python, including in the MIDDLE of composing a --json answer — on a
+    # stock macOS with no Python 3.11+, the very first `exakit status --json`
+    # lands here, and these lines used to interleave with the JSON object on
+    # stdout, corrupting the one answer the contract promises is parseable.
+    info "Installing the managed Python bootstrapper (uv)" >&2
     mkdir -p "$EXAKIT_BIN_DIR"
     if command -v curl >/dev/null 2>&1; then
         env UV_NO_MODIFY_PATH=1 INSTALLER_NO_MODIFY_PATH=1 sh -c \
@@ -1164,15 +1174,15 @@ exakit_ensure_uv() {
         env UV_NO_MODIFY_PATH=1 INSTALLER_NO_MODIFY_PATH=1 sh -c \
             'wget -qO- https://astral.sh/uv/install.sh | sh' >> "${EXAKIT_LOG_FILE:-/dev/null}" 2>&1 || return 1
     else
-        warn "Neither curl nor wget is available to install uv."
+        warn "Neither curl nor wget is available to install uv." >&2
         return 1
     fi
     if [ -x "$EXAKIT_BIN_DIR/uv" ]; then
         EXAKIT_UV_BIN="$EXAKIT_BIN_DIR/uv"
-        ok "uv installed at $EXAKIT_UV_BIN"
+        ok "uv installed at $EXAKIT_UV_BIN" >&2
         return 0
     fi
-    warn "uv installation finished but the binary was not found in $EXAKIT_BIN_DIR."
+    warn "uv installation finished but the binary was not found in $EXAKIT_BIN_DIR." >&2
     return 1
 }
 
@@ -9950,6 +9960,11 @@ _exakit_uninstall_component() {
                     # ...and the skills it owns go with it. Here rather than in
                     # the module, so every add-on gets it without writing a line.
                     [ "$_uc_dry" = "1" ] || exakit_remove_addon_skills "$_uc_key" || true
+                    # ...and so does its BOOT ENTRY. Left behind, launchd or
+                    # systemd kept firing a launcher that no longer exists on
+                    # every login, forever — the one artifact of the add-on
+                    # nothing would ever clean up again.
+                    [ "$_uc_dry" = "1" ] || _exakit_autostart_unregister "$_uc_key" || true
                 else
                     warn "The $_uc_key module carries no uninstall — update the kit: exakit update"
                 fi

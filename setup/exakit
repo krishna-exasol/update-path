@@ -354,6 +354,13 @@ if db.startswith("conflict"):
 if installing:
     remedies["install"] = "exakit status --json"
     remedy_hints["install"] = "the installer is still running (step: %s) — poll the remedy until status is running" % (step or "unknown")
+elif step:
+    # A DEAD installer: the lock names a process that is gone, but the step it
+    # died at is still recorded. AGENTS.md promises exactly this shape —
+    # installing: false, install_step still set, remedies.install naming the
+    # re-run — and the shell half never kept it.
+    remedies["install"] = install_cmd
+    remedy_hints["install"] = "the installer died at step '%s' — re-running resumes there" % step
 # A step the installer never finished. With the installer gone (no live lock)
 # the manifest's steps_completed is the only trace, and `remedies` was empty
 # for it: a session that picked the machine up after a crashed install saw
@@ -398,7 +405,9 @@ payload = {
     # knowing which of the three shapes it received.
     "status": top_status,
     "installing": installing,
-    "install_step": (step or None) if installing else None,
+    # Still set for a DEAD installer (installing: false): the step it died at
+    # is the one fact the next session needs, and AGENTS.md documents it here.
+    "install_step": step or None,
     "kit_level": kit or None,
     "runtime": {"type": rtype or None, "status": db},
     "running": running,
@@ -1718,7 +1727,11 @@ case "${1:-help}" in
                   *) _with_notice cmd_status "$@" ;;
               esac ;;
     version|--version|-v)  shift; cmd_version "$@" ;;
-    update) shift; _exakit_refuse_unknown_options update "--yes,-y" "$@"; cmd_update "$@" ;;
+    # --plan/--backup/--apply are the Personal MAJOR-upgrade route the header
+    # and the macOS quickstart have always named — and this guard refused
+    # them, so the documented migration path was unreachable from the CLI
+    # while personal_update implemented it in full.
+    update) shift; _exakit_refuse_unknown_options update "--yes,-y,--plan,--backup,--apply" "$@"; cmd_update "$@" ;;
     info)     shift
               _exakit_refuse_unknown_options info "--json,-j" "$@"
               case "${1:-}" in

@@ -12,8 +12,9 @@
 #     browser URL.
 #   - Pure-Python package with a `dash-server` console script; releases carry
 #     no prebuilt binaries, so the install is `uv pip install` of the tag's
-#     source tarball into a dedicated venv under the kit home — the same
-#     tag-pinned, package-manager-verified posture as the mcp and pyexasol
+#     source tarball into a dedicated venv under the kit home — tag-pinned like
+#     the mcp and pyexasol components, but with NO digest verification: the
+#     release publishes no digest for the tarball, unlike the binary add-ons
 #     components. (GitHub source tarballs have no stable published digest, so
 #     there is nothing kit-side to pin a checksum against.)
 #   - Control plane: 127.0.0.1:5100 by default (env DASH_SERVER_HOST/PORT).
@@ -268,8 +269,8 @@ dash_server_install() {
 # renders nothing), which is why validation passed while the browser page
 # answered 500 with TemplateNotFound: dashboard_catalog.html.
 #
-# Rather than ship a broken UI, the install re-downloads the same verified
-# release tarball and copies across any non-.py file that the source has and
+# Rather than ship a broken UI, the install re-downloads the same
+# tag-pinned release tarball (no published digest exists to verify it against) and copies across any non-.py file that the source has and
 # the installed package lacks. Nothing is overwritten, so a fixed release
 # simply makes this a no-op — the day upstream declares the data, this quietly
 # stops doing anything and can be deleted.
