@@ -352,7 +352,7 @@ function Get-JsonTablesVerifiedAsset {
         return $true
     }
     Remove-Item -Force -ErrorAction SilentlyContinue $Destination
-    Warn2 "No checksum is available for $Asset; refusing an unverified artifact. Usually the release is still publishing or the GitHub API was unreachable - retry with: exakit update json-tables"
+    Warn2 "No checksum is available for $Asset; refusing an unverified artifact. Usually the release is still publishing or the GitHub API was unreachable - retry with: exakit update json-tables. Add its digest to versions.json (components.json-tables.sha256) or, at your own risk, override with EXAKIT_ALLOW_UNVERIFIED_JSON_TABLES=1."
     return $false
 }
 
@@ -643,6 +643,21 @@ function Update-JsonTables {
     $available = Get-ExakitAddonAdvertisedVersion -Id "json-tables" -Fallback $script:JsonTablesVersionFallback
     if (-not $available) { Fail "Could not resolve the advertised json-tables version." }
     $current = Get-JsonTablesInstalledVersion
+    # Same build, and every downloaded piece still on disk: rewrite the
+    # launcher so a newer kit's improvements reach an existing install, then
+    # stop. Without this, `exakit update` re-downloaded the wheel, the ingest
+    # engine AND the compiled cargo shim on every single run - three release
+    # assets for no change - while macOS and Linux did nothing and said
+    # "already current". A missing engine or shim falls through to the full
+    # install, which is the repair path. Twin of the early return in
+    # json_tables_update.
+    $shimPath = Join-Path (Get-JsonTablesShimDir) "cargo.exe"
+    if ($current -and $current -eq $available -and
+        (Test-Path (Get-JsonTablesEnginePath)) -and (Test-Path $shimPath)) {
+        [void](Write-JsonTablesLauncher)
+        Ok "JSON Tables is already current ($current)"
+        return $true
+    }
     if ($current) { Info "Updating JSON Tables $current -> $available" }
     else { Info "Installing JSON Tables $available" }
     $script:JsonTablesVersion = $available

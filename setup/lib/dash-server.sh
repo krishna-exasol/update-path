@@ -269,9 +269,10 @@ dash_server_install() {
 # renders nothing), which is why validation passed while the browser page
 # answered 500 with TemplateNotFound: dashboard_catalog.html.
 #
-# Rather than ship a broken UI, the install re-downloads the same
-# tag-pinned release tarball (no published digest exists to verify it against) and copies across any non-.py file that the source has and
-# the installed package lacks. Nothing is overwritten, so a fixed release
+# Rather than ship a broken UI, the install re-downloads the same tag-pinned
+# release tarball — NOT checksum-verified, because a GitHub source tarball
+# publishes no digest to pin (see the module header) — and copies across any
+# non-.py file that the source has and the installed package lacks. Nothing is overwritten, so a fixed release
 # simply makes this a no-op — the day upstream declares the data, this quietly
 # stops doing anything and can be deleted.
 _dash_server_restore_package_data() {
@@ -441,6 +442,15 @@ if [ -n "@DSN@" ] && [ -z "${DASH_SERVER_EXASOL_DSN:-}" ]; then
         export DASH_SERVER_EXASOL_TLS_VERIFY="${DASH_SERVER_EXASOL_TLS_VERIFY:-false}"
     fi
 fi
+# Bind where the kit says, not where dash-server defaults. Without these the
+# pre-flight check above verdicts @PORT@ and the server then binds its own
+# built-in default, so an install that stepped up past a busy 5100 starts on
+# the busy port - or, if the upstream default host is not loopback, exposes an
+# unauthenticated control plane on the LAN. Setdefaults, like
+# DASH_SERVER_INSTANCE_PATH above: a user who exports their own still wins.
+: "${DASH_SERVER_HOST:=127.0.0.1}"
+: "${DASH_SERVER_PORT:=@PORT@}"
+export DASH_SERVER_HOST DASH_SERVER_PORT
 exec "@VENVBIN@" "$@"
 EXAKIT_DS_EOF
     # sed with | as the delimiter: the substituted values are paths, DSNs and
