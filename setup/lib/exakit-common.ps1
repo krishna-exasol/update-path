@@ -496,6 +496,21 @@ function Write-ExakitError([string]$Msg) {
 # fault the engine text does not name: `SELECT TOP n` fails as "unexpected
 # UNSIGNED_INTEGER_" (TOP parses as an alias), so only the statement can tell
 # it from any other syntax error.
+# Get-ExakitDbErrorRemedyCommand - the RUNNABLE half of the remedy: one
+# command verbatim, or "". sql --json puts THIS at the remedy key (the
+# contract: run it verbatim, or null) and the sentence from
+# Get-ExakitDbErrorRemedy at remedy_hint. Twin of exakit_db_error_remedy_cmd.
+function Get-ExakitDbErrorRemedyCommand {
+    param([string]$Text)
+    if (-not $Text) { return "" }
+    if ($Text -match 'onnection refused' -or $Text -match 'Errno 61' -or
+        $Text -match 'Errno 111' -or $Text -match '(?i)could not connect' -or
+        $Text -match '(?i)failed to connect to' -or $Text -match '(?i)actively refused' -or
+        $Text -match 'os error 10061') { return "exakit start" }
+    if ($Text -match '(?i)tls handshake' -or $Text -match 'TLS error') { return "exakit status" }
+    return ""
+}
+
 function Get-ExakitDbErrorRemedy {
     param([string]$Text, [string]$Statement = "")
     $lines = @()
@@ -5841,7 +5856,12 @@ function Get-ExakitProbedVersion {
 
 function Get-ExakitStartupDir {
     if ($env:EXAKIT_STARTUP_DIR) { return $env:EXAKIT_STARTUP_DIR }
-    return (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup")
+    # Guarded like every other env-based Join-Path: under the global Stop
+    # preference a null APPDATA (stripped service environments) throws mid
+    # `exakit autostart` instead of answering.
+    $base = $env:APPDATA
+    if (-not $base) { $base = Join-Path (Get-ExakitAgentHome) "AppData\Roaming" }
+    return (Join-Path $base "Microsoft\Windows\Start Menu\Programs\Startup")
 }
 
 function Get-ExakitUpdateTargets {
