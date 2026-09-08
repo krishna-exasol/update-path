@@ -35,9 +35,23 @@ $errors = $null; $tokens = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $repo "setup/lib/exakit-common.ps1"), [ref]$tokens, [ref]$errors)
 if ($errors.Count -gt 0) { throw "exakit-common.ps1 has parse errors" }
+# TOP-LEVEL FUNCTIONS ONLY. exakit-common.ps1 declares `class
+# ExakitFailException`, and on Windows PowerShell 5.1 that class's constructor
+# comes back from this walk looking like a function definition. Running its
+# extent as an expression is then a call to a command named
+# ExakitFailException, which does not exist, and the whole suite died before
+# its first check. pwsh 7 does not reproduce it, so the filter has to be here
+# rather than trusted to the engine.
 $fns = $ast.FindAll({ param($n)
-    $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
-foreach ($f in $fns) { Invoke-Expression $f.Extent.Text }
+    $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $n.Extent.Text -match '^\s*(function|filter)\s' }, $true)
+# Each definition on its own, and a failure to define one is not fatal here:
+# what matters is that the handful this suite exercises exist, which is
+# asserted immediately below. A blanket stop would again turn one unexpected
+# node into a dead suite.
+foreach ($f in $fns) {
+    try { Invoke-Expression $f.Extent.Text } catch { }
+}
 foreach ($needed in @("Get-ExakitSkillRoots", "Get-ExakitSkillField", "Copy-ExakitSkill", "Remove-ExakitSkillCopy")) {
     if (-not (Get-Command $needed -ErrorAction SilentlyContinue)) { throw "$needed not found in exakit-common.ps1" }
 }
