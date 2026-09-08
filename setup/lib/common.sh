@@ -841,6 +841,32 @@ exakit_failure_note_file() {
 # exakit_note_failure <reason> — record why the step now running gave up.
 # Never fails: a note is a nicety, and losing it must not turn a soft failure
 # into a hard one.
+# exakit_reason_summary <text> — one informative line out of a multi-line error.
+#
+# The note file's line 1 is the reason and every reader takes it, so a reason
+# that spans lines has to be collapsed. Collapsing it by keeping line 1 records
+# "Traceback (most recent call last):" — pure boilerplate — as the whole
+# explanation, in the log AND in last_failure, where it then persists across
+# every later `exakit status --json`. A header line ends in a colon with the
+# message under it, so in that shape the LAST line is the informative one;
+# anything else keeps line 1, which is where a shell error puts its message.
+# ⇄ twin: Get-ExakitReasonSummary in setup/lib/exakit-common.ps1.
+exakit_reason_summary() {
+    _rs_text="$*"
+    _rs_n="$(printf '%s\n' "$_rs_text" | sed 's/[[:space:]]*$//' | grep -c '[^[:space:]]' || true)"
+    [ -n "$_rs_n" ] || _rs_n=0
+    if [ "$_rs_n" -le 1 ]; then
+        printf '%s' "$_rs_text" | tr '\n' ' ' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+        return 0
+    fi
+    _rs_first="$(printf '%s\n' "$_rs_text" | grep '[^[:space:]]' | head -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    case "$_rs_first" in
+        *:) _rs_pick="$(printf '%s\n' "$_rs_text" | grep '[^[:space:]]' | tail -n 1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')" ;;
+        *)  _rs_pick="$_rs_first" ;;
+    esac
+    printf '%s (see the log for the full text)' "$_rs_pick"
+}
+
 exakit_note_failure() {
     # A READ-ONLY state query must never write state. status --json surfaces
     # this note as last_failure - "a step of your install did not finish" -
@@ -855,7 +881,10 @@ exakit_note_failure() {
     # `head -n 1`. Line 2 is when it happened, because a note with no date
     # cannot be told from a current one -- and an undated note that outlived its
     # cause is exactly how a healthy machine came to look broken.
-    { printf '%s\n%s\n' "$*" "$(_exakit_ts)" > "$_nf_file"; } 2>/dev/null || true
+    # ONE line, and the informative one: see exakit_reason_summary.
+    _nf_reason="$(exakit_reason_summary "$*")"
+    [ -n "$_nf_reason" ] || _nf_reason="$*"
+    { printf '%s\n%s\n' "$_nf_reason" "$(_exakit_ts)" > "$_nf_file"; } 2>/dev/null || true
     return 0
 }
 
