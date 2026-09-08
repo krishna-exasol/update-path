@@ -48,6 +48,17 @@ Rootless Podman is fully supported, with three realities worth knowing:
 - **Lingering.** A user unit only runs while you have a session. The kit enables lingering for your user when it can (`loginctl enable-linger`); on a box where that is refused, it says so and names the command an admin has to run. Without lingering, a headless machine will not bring the database back at boot.
 - **Preconditions Podman itself needs**: your user must have subordinate id ranges (`/etc/subuid`, `/etc/subgid` — most distros set these up when the user is created) and cgroups v2 (the default on every current distro). The kit binds the database to 127.0.0.1:8563, which is above the unprivileged-port floor, so no sysctl change is needed.
 
+## Headless, over SSH
+
+The database and every add-on listen on `127.0.0.1` only, by design — that bind address is not configurable, and opening it is not the answer. To reach them from your laptop, forward the port over SSH:
+
+```bash
+ssh -N -L 8563:127.0.0.1:8563 you@server     # the database, for a local SQL client
+ssh -N -L 5100:127.0.0.1:5100 you@server     # dash-server, then open http://127.0.0.1:5100
+```
+
+Clipboard and browser conveniences degrade silently on a headless box (the kit prints what it would have copied); everything else works unchanged.
+
 ## Everyday commands
 
 ```bash
@@ -64,6 +75,6 @@ exakit update      # bring the kit and its components up to date
 | Situation | What to know |
 |---|---|
 | Docker vs Podman | Docker is preferred when both are usable; the choice is recorded and reused. `docker ps` failing with *permission denied* means the group fix above, not a reinstall. |
-| Headless server | Autostart needs lingering (see above). Clipboard and browser conveniences degrade silently; everything else works over SSH. |
+| Headless server | Autostart needs lingering (see above). Everything binds to loopback — forward the port over SSH rather than changing the bind address (see [Headless, over SSH](#headless-over-ssh)). |
 | Where did everything go? | The kit lives in `~/.exasol-starter-kit` (credentials under `credentials/`, logs under `logs/`); the database data lives in the `exasol-nano-data` volume inside your engine — **the volume IS the database**. |
 | Removing it | `exakit uninstall` — interactive, and it names what goes, including the data volume. |

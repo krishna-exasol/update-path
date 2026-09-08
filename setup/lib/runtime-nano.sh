@@ -96,10 +96,32 @@ nano_check_requirements() {
     [ "$(detect_arch)" != "unsupported" ] || \
         die "Unsupported CPU architecture: $(uname -m). Exasol Nano images exist for x86_64 and arm64 only."
 
+    # WSL 1 BEFORE the engine check, because every remedy the engine check has
+    # is a loop here: WSL 1 has no Linux kernel, so no container engine can run
+    # in it (Docker Desktop dropped WSL 1 support), and a user told to "install
+    # Docker" or to "enable WSL integration for this distro" is being sent after
+    # something that cannot exist. One sentence ends it instead.
+    if [ "$(detect_wsl_version 2>/dev/null)" = "1" ]; then
+        error "This distro is running on WSL 1, which has no Linux kernel and cannot run a container engine — the local database cannot be installed here."
+        printf '    Convert it to WSL 2 from an admin PowerShell (your files are kept):\n' >&2
+        printf '      wsl --set-version <distro> 2\n' >&2
+        printf '    List your distros and their versions with: wsl -l -v\n' >&2
+        die "WSL 1 is not supported — convert this distro to WSL 2, then re-run."
+    fi
+
     _engine="$(detect_container_runtime_detail)"
     case "$_engine" in
         docker|podman)
             ok "Container runtime: $_engine"
+            # Rootless Podman answers `podman info` and then fails at `run` when
+            # the machine is missing what rootless actually needs (user-namespace
+            # ranges, cgroups v2). Cheap to check here; the engine's own error
+            # names neither, and nothing in the kit translates it.
+            if [ "$_engine" = "podman" ]; then
+                _nano_podman_gap="$(detect_rootless_podman_gap 2>/dev/null || true)"
+                [ -n "$_nano_podman_gap" ] && \
+                    warn "Rootless Podman: $_nano_podman_gap"
+            fi
             ;;
         docker-permission)
             # The daemon is up — the USER cannot reach the socket (classic
@@ -109,8 +131,14 @@ nano_check_requirements() {
             error "Docker is running, but this user is not allowed to use it (permission denied on the Docker socket)."
             printf '    Your user is not in the docker group. Fix it and re-run this installer:\n' >&2
             printf '      1. sudo usermod -aG docker $USER\n' >&2
-            printf '      2. log out and back in (or run: newgrp docker)\n' >&2
+            printf '      2. start a session that has the new group: run "newgrp docker" here, or log out and back in\n' >&2
             printf '      3. confirm it works without sudo: docker ps\n' >&2
+            # "Log out and back in" is the one instruction that does NOT work in
+            # WSL: there is no login session to leave, and closing the terminal
+            # changes nothing — the group is picked up when the distro's init
+            # restarts. Twin of the same sentence in preflight_report (detect.sh).
+            [ "$(detect_os)" = "wsl" ] && \
+                printf '    On WSL, closing the terminal is not enough: run "wsl --terminate <distro>" from Windows, then reopen it.\n' >&2
             printf '    Do not run this installer with sudo — it must run as your normal user.\n' >&2
             die "No usable container runtime — fix the Docker socket permission, then re-run."
             ;;
@@ -120,8 +148,21 @@ nano_check_requirements() {
             # second), so tell the user the whole picture: what failed, what was
             # tried, and how to fix either one.
             if command -v podman >/dev/null 2>&1; then
-                _podman_hint="Podman was tried as a fallback, but its machine/service is not running either."
-                _podman_fix="start it: podman machine start (or: sudo systemctl start podman)"
+                # BRANCHED on the platform. `podman machine` is the macOS/Windows
+                # VM wrapper — it does not exist on Linux or in WSL, and
+                # `sudo systemctl start podman` starts the ROOT socket, which
+                # does nothing for the rootless user this installer insists on
+                # being. On Linux `podman info` fails for a different reason
+                # entirely, almost always the user-namespace ranges.
+                if [ "$(detect_os)" = "macos" ]; then
+                    _podman_hint="Podman was tried as a fallback, but its machine is not running either."
+                    _podman_fix="start its VM: podman machine start"
+                else
+                    _podman_hint="Podman was tried as a fallback, but 'podman info' failed too."
+                    _podman_fix="$(detect_rootless_podman_gap 2>/dev/null || true)"
+                    [ -n "$_podman_fix" ] || \
+                        _podman_fix="check the user-namespace ranges first: grep \$(id -un) /etc/subuid /etc/subgid (using the Podman socket? systemctl --user start podman.socket)"
+                fi
             else
                 _podman_hint="Podman was tried as a fallback, but it is not installed."
                 _podman_fix="install it (https://podman.io/docs/installation), then re-run"
@@ -143,11 +184,27 @@ nano_check_requirements() {
             die "No usable container runtime — start Docker or provide Podman, then re-run."
             ;;
         podman-stopped)
-            error "Podman is installed but its machine/service is not running (Docker was not found)."
-            printf '    Fix either runtime and re-run this installer:\n' >&2
-            printf '      Podman:  podman machine start (or: sudo systemctl start podman)\n' >&2
+            # Same platform branch as the docker-stopped arm above: a Linux user
+            # told to start a VM that does not exist on their OS has been handed
+            # a remedy that cannot work, twice over.
+            if [ "$(detect_os)" = "macos" ]; then
+                error "Podman is installed but its machine is not running (Docker was not found)."
+                printf '    Fix either runtime and re-run this installer:\n' >&2
+                printf '      Podman:  podman machine start\n' >&2
+            else
+                error "Podman is installed but 'podman info' failed (Docker was not found)."
+                _podman_gap="$(detect_rootless_podman_gap 2>/dev/null || true)"
+                printf '    Fix either runtime and re-run this installer:\n' >&2
+                if [ -n "$_podman_gap" ]; then
+                    printf '      Podman:  %s\n' "$_podman_gap" >&2
+                else
+                    printf '      Podman:  on Linux this is usually the user-namespace ranges — check:\n' >&2
+                    printf '                 grep $(id -un) /etc/subuid /etc/subgid\n' >&2
+                    printf '               using the Podman socket? systemctl --user start podman.socket\n' >&2
+                fi
+            fi
             printf '      Docker:  install it (https://docs.docker.com/get-docker/)\n' >&2
-            die "No usable container runtime — start Podman or install Docker, then re-run."
+            die "No usable container runtime — fix Podman or install Docker, then re-run."
             ;;
         none)
             error "No container runtime found. Exasol Nano needs Docker or Podman."
@@ -549,8 +606,11 @@ nano_install() {
                 # this distro shows up in lsof. Twin of the WSL guidance in
                 # Install-Nano (nano.ps1).
                 printf '    Nothing here holding it? Windows and WSL share localhost - check the WINDOWS side\n' >&2
-                printf '    of this machine (a Windows Exasol install, or a Docker Desktop container) or take\n' >&2
-                printf '    another port.\n' >&2
+                printf '    of this machine (a Windows Exasol install, a Docker Desktop container, or "wslrelay"\n' >&2
+                printf '    still holding the port after an earlier WSL container). From PowerShell:\n' >&2
+                printf '      Get-NetTCPConnection -LocalPort %s -State Listen\n' "$EXAKIT_DB_PORT" >&2
+                printf '    If it is a leftover relay and nothing in WSL needs it: wsl --shutdown\n' >&2
+                printf '    If it is another database you still want, leave it alone and take another port.\n' >&2
             fi
             die "Port $EXAKIT_DB_PORT is not available."
         fi
@@ -637,7 +697,18 @@ nano_install() {
         # and the image refuses to boot when handed init options over an
         # initialised /exa - so an adopted volume gets neither.
         if [ "$_nano_volume_existed" -eq 1 ]; then
-            info "Adopting the existing database volume $EXAKIT_NANO_VOLUME (its data and password are kept)"
+            # info_step, not info: this whole branch runs inside the one-line
+            # quiet window opened above, which routes info() to the LOGFILE. The
+            # single most consequential sentence on the shared-engine path -
+            # THIS INSTALL DID NOT CREATE THE DATABASE IT IS ABOUT TO USE - was
+            # therefore invisible on every terminal install, while the warning
+            # about its missing password (never gated) printed: the reader got
+            # the scary consequence without the sentence that explains it.
+            # ⇄ twin: Install-Nano in nano.ps1.
+            info_step "Adopting the existing database volume $EXAKIT_NANO_VOLUME — this install did not create it, and its data and SYS password are kept as they are."
+            if [ "$(detect_os)" = "wsl" ]; then
+                info_step "On a Windows+WSL machine this volume is usually a Windows install's database: Docker Desktop is one engine shared by both sides."
+            fi
             run_logged "$_engine" run -d \
                 --name "$EXAKIT_NANO_CONTAINER" \
                 --label "com.exasol.exakit.os=$(detect_os)" \

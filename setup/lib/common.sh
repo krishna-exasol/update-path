@@ -9849,6 +9849,36 @@ store_credential() {
     fi
     chmod 600 "$EXAKIT_CREDS_DIR/$1.tmp"
     mv "$EXAKIT_CREDS_DIR/$1.tmp" "$EXAKIT_CREDS_DIR/$1" || die "Could not save credential '$1'."
+    _exakit_warn_unprotected_credentials "$EXAKIT_CREDS_DIR/$1"
+}
+
+# _exakit_warn_unprotected_credentials <file> — say so when the chmod above did
+# not actually take.
+#
+# A chmod on a filesystem with no Unix permission bits SUCCEEDS and stores
+# nothing. That is the default state of a Windows drive mounted into WSL
+# (DrvFs without the `metadata` option): the kit's one protection on a
+# plaintext database password is accepted and discarded, every file stays mode
+# 0777, and the install prints its usual ticks. read_credential's own
+# permission warning only fires when a file is UNreadable, never when it is too
+# readable — so nothing in the kit noticed. Warned ONCE per run: the same home
+# holds every credential and the sentence does not improve by repetition.
+_exakit_warn_unprotected_credentials() {
+    [ "${EXAKIT_CREDS_MODE_WARNED:-0}" = "1" ] && return 0
+    _wuc_file="$1"
+    [ -f "$_wuc_file" ] || return 0
+    # The portable test: find is the only mode query that behaves the same on
+    # BSD and GNU. A filesystem that reports the mode we asked for is fine.
+    [ "$(find "$_wuc_file" -perm 0600 -print 2>/dev/null)" = "$_wuc_file" ] && return 0
+    EXAKIT_CREDS_MODE_WARNED=1
+    warn "The database passwords in $EXAKIT_CREDS_DIR cannot be protected on this filesystem: 'chmod 600' was accepted and had no effect."
+    if detect_wsl_drvfs_path "$EXAKIT_CREDS_DIR" 2>/dev/null; then
+        warn "That is a Windows drive mounted into WSL — every Windows user and process on this machine can read them, and OneDrive will sync them if the profile is backed up."
+        info "Fix it by moving the kit to the Linux filesystem: re-run the installer with EXAKIT_HOME=\$HOME/exakit (any path you own on the Linux side), and keep that variable exported for later exakit commands."
+    else
+        info "Move the kit to a filesystem that supports Unix permissions: re-run the installer with EXAKIT_HOME set to a path there."
+    fi
+    return 0
 }
 
 read_credential() {
@@ -9937,6 +9967,40 @@ _exakit_remove_installed_skills() {
     return 0
 }
 
+# _exakit_nano_target_names — "<container>|<volume>" for the Nano deployment
+# this install recorded, so a destructive prompt can NAME what it is about to
+# delete. The manifest first (the names this install actually used, which
+# EXAKIT_NANO_CONTAINER/VOLUME may have moved), then the defaults.
+_exakit_nano_target_names() {
+    _ntn_c="$(manifest_get runtime.container 2>/dev/null || true)"
+    _ntn_v="$(manifest_get runtime.volume 2>/dev/null || true)"
+    [ -n "$_ntn_c" ] || _ntn_c="${EXAKIT_NANO_CONTAINER:-exasol-nano}"
+    [ -n "$_ntn_v" ] || _ntn_v="${EXAKIT_NANO_VOLUME:-exasol-nano-data}"
+    printf '%s|%s' "$_ntn_c" "$_ntn_v"
+}
+
+# _exakit_shared_engine_db_warning — the shared-Docker-engine hazard, said
+# BEFORE consent is taken.
+#
+# It used to be printed from inside _exakit_uninstall_component, i.e. after the
+# user had already typed UNINSTALL — the one sentence that might have changed
+# their answer, delivered once the answer could no longer be changed. The
+# confirmation itself named neither the container nor the volume (those appeared
+# only in the post-removal record line), so there was no moment at which a WSL
+# user could have noticed they were about to delete a Windows install's
+# database. Returns non-zero when the hazard does not apply, so a caller can
+# use it as a test. ⇄ twin: Show-ExakitUninstallMenu in setup/exakit.ps1.
+_exakit_shared_engine_db_warning() {
+    [ "$(manifest_get runtime.type 2>/dev/null || true)" = "nano" ] || return 1
+    case "$(detect_os 2>/dev/null || true)" in
+        wsl|windows) ;;
+        *) return 1 ;;
+    esac
+    _sedw_names="$(_exakit_nano_target_names)"
+    warn "Windows and WSL share one Docker engine. If this machine also has a Windows or WSL install of the kit, removing the container '${_sedw_names%|*}' and the volume '${_sedw_names#*|}' deletes that database too, and it cannot be recovered."
+    return 0
+}
+
 # _exakit_uninstall_component <key> <dry> — one selectable piece of the kit,
 # removed on its own. Each removal also clears its manifest record and step
 # flag, so `exakit status`, `exakit version` and an installer re-run all read the
@@ -9960,8 +10024,10 @@ _exakit_uninstall_component() {
                 info "  will remove: the local Exasol $_uc_type deployment and ALL its data$_uc_shared"
                 return 0
             fi
-            [ -n "$_uc_shared" ] && [ "$_uc_type" = "nano" ] && \
-                warn "Windows and WSL share one Docker engine: removing this container and volume removes the database for BOTH sides."
+            # NO warning here any more: by this line the user has typed
+            # UNINSTALL and the removal is under way. The hazard is stated
+            # before the gate instead (_exakit_shared_engine_db_warning, called
+            # from exakit_uninstall_menu and exakit_uninstall_run).
             info "Removing the local Exasol $_uc_type deployment and all data"
             case "$_uc_type" in
                 nano)     nano_teardown --data     || warn "Database removal reported errors" ;;
@@ -10404,6 +10470,19 @@ _exakit_autostart_register() {
         linux|wsl)
             if ! command -v systemctl >/dev/null 2>&1 || ! systemctl --user show-environment >/dev/null 2>&1; then
                 warn "$_ar_id: this session has no systemd --user, so nothing was registered."
+                # WSL2 ships with systemd OFF by default, so on a stock
+                # Ubuntu-under-WSL this is the branch that runs — and the
+                # remedy that makes it work is a two-line edit on the Windows
+                # side that appeared nowhere in the kit. A guard that refuses
+                # without naming the fix leaves the reader with no move.
+                if [ "$(detect_os)" = "wsl" ]; then
+                    warn "On WSL, systemd is off by default. Turn it on, then register again:"
+                    info "  1. add these two lines to /etc/wsl.conf:  [boot]  and  systemd=true"
+                    info "  2. from Windows: wsl --shutdown   (then reopen this distro)"
+                    info "  3. exakit autostart"
+                    info "Until then, start it by hand after a reboot with: exakit start"
+                    return 1
+                fi
                 info "Start it by hand after a reboot with: exakit start"
                 return 1
             fi
@@ -10769,11 +10848,31 @@ exakit_uninstall_menu() {
     done <<EXAKIT_UM_PANEL_EOF
 $_um_picked_labels
 EXAKIT_UM_PANEL_EOF
+    # NAME THE DATABASE. "EVERYTHING - the full kit (database + data, ...)" is
+    # a category; the container and the volume are the things the engine
+    # deletes, and until now they were printed only in the record line AFTER the
+    # removal. A reader who has one of them on the screen can recognise it as
+    # the database the other side of the machine is using; a reader who has the
+    # word "database" cannot.
+    case " $_um_picked " in
+        *" database "*|*" everything "*)
+            if [ "$(manifest_get runtime.type 2>/dev/null || true)" = "nano" ]; then
+                _um_names="$(_exakit_nano_target_names)"
+                ui_panel_line ""
+                ui_panel_line "Database: Nano container '${_um_names%|*}', data volume '${_um_names#*|}'"
+                ui_panel_line "The volume IS the database - removing it cannot be undone."
+            fi
+            ;;
+    esac
     ui_panel_end
     printf '\n'
     warn "This is IRREVERSIBLE. Removed data cannot be recovered."
     case " $_um_picked " in
-        *" database "*|everything*) warn "The database selection deletes ALL local database data." ;;
+        *" database "*|*" everything "*)
+            warn "The database selection deletes ALL local database data."
+            # BEFORE the typed gate, never after it.
+            _exakit_shared_engine_db_warning || true
+            ;;
     esac
     _um_tty="$(_exakit_prompt_tty)"
     [ -n "$_um_tty" ] || die "uninstall needs an interactive terminal to confirm; use --yes for the scripted full uninstall."
@@ -10878,7 +10977,18 @@ exakit_uninstall_run() {
     #    which for Personal also reaps any orphaned runner daemon on the DB port.
     _type="$(manifest_get runtime.type 2>/dev/null || true)"
     if [ -n "$_type" ]; then
-        _step "local Exasol $_type deployment and ALL its data"
+        # Named BEFORE the removal, not only in the record line after it: on
+        # `--yes` there is no gate to read, so this line and the shared-engine
+        # warning below it are the last chance to recognise the container as one
+        # the other side of a Windows+WSL machine is also using.
+        if [ "$_type" = "nano" ] && command -v _exakit_nano_target_names >/dev/null 2>&1; then
+            _un_names="$(_exakit_nano_target_names)"
+            _step "local Exasol nano deployment and ALL its data: container '${_un_names%|*}', data volume '${_un_names#*|}'"
+        else
+            _step "local Exasol $_type deployment and ALL its data"
+        fi
+        command -v _exakit_shared_engine_db_warning >/dev/null 2>&1 && \
+            { _exakit_shared_engine_db_warning || true; }
         if [ "$_dry" != "1" ]; then
             case "$_type" in
                 nano)     nano_teardown --data     || warn "Database removal reported errors (continuing uninstall)" ;;
