@@ -4298,6 +4298,19 @@ function Get-ExakitMarketplaceAddons {
             FallbackVar = "DashServerVersionFallback"
         },
         [pscustomobject]@{
+            Id          = "dbt-exasol"
+            Label       = "dbt-exasol (dbt models on Exasol)"
+            InstallFn   = "Install-DbtExasol"
+            ValidateFn  = "Test-DbtExasol"
+            UpdateFn    = "Update-DbtExasol"
+            VersionFn   = "Get-DbtExasolInstalledVersion"
+            UninstallFn = "Uninstall-DbtExasol"
+            SummaryFn   = "Get-DbtExasolSummary"
+            SystemPresentFn = "Test-DbtExasolSystemPresent"
+            EnvVar      = "EXAKIT_DBT_EXASOL_VERSION"
+            FallbackVar = "DbtExasolVersionFallback"
+        },
+        [pscustomobject]@{
             Id          = "exasol-scheduler"
             Label       = "Exasol Scheduler (SQL jobs on a schedule)"
             InstallFn   = "Install-ExasolScheduler"

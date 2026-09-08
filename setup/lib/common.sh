@@ -3137,6 +3137,7 @@ exakit_component_current() {
 # impossible here no matter what a future add-on shells out to.
 exakit_marketplace_addons() {
     printf '%s\n' "dash-server|dash-server (AI dashboard host)"
+    printf '%s\n' "dbt-exasol|dbt-exasol (dbt models on Exasol)"
     printf '%s\n' "exasol-scheduler|Exasol Scheduler (SQL jobs on a schedule)"
     printf '%s\n' "exasol-vscode|Exasol for VS Code (editor extension)"
     printf '%s\n' "json-tables|JSON Tables (JSON into Exasol)"
