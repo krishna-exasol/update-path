@@ -70,8 +70,29 @@ _dash_server_resolve_port() {
 # add-on that was never started. These three answer the real question.
 
 _dash_server_port_pids() {
+    # Through the shared probe, which tries ss, then lsof, then netstat. Asking
+    # lsof alone meant a stock Fedora or Ubuntu Server -- neither ships it --
+    # answered "nobody is listening" for every question below, and ownership
+    # detection fell back to the bare HTTP probe: exactly the bug the two
+    # functions under this one exist to prevent. Only when NONE of the three is
+    # present is the answer unknown, and _dash_server_port_probe_degraded says
+    # so once, so a wrong verdict is never silent.
+    if command -v port_listener_pids >/dev/null 2>&1; then
+        port_listener_pids "$EXAKIT_DASH_SERVER_PORT" 2>/dev/null
+        return 0
+    fi
     command -v lsof >/dev/null 2>&1 || return 0
     lsof -nP -iTCP:"$EXAKIT_DASH_SERVER_PORT" -sTCP:LISTEN -t 2>/dev/null | sort -u
+}
+
+# True when no tool on this machine can name a listener, so "not ours" below is
+# "cannot tell", not "checked and no". Callers that would otherwise report a
+# confident verdict say which it was.
+_dash_server_port_probe_degraded() {
+    command -v ss >/dev/null 2>&1 && return 1
+    command -v lsof >/dev/null 2>&1 && return 1
+    command -v netstat >/dev/null 2>&1 && return 1
+    return 0
 }
 
 # Is the listener one of OUR processes? Matched on the venv path, which is
@@ -104,7 +125,11 @@ _dash_server_port_foreign_desc() {
 # Is OUR server up? lsof answers precisely; without it fall back to the HTTP
 # probe, which is the old behaviour and the best a machine without lsof allows.
 _dash_server_running() {
-    if command -v lsof >/dev/null 2>&1; then
+    # Keyed on whether ANY listener probe exists, not on lsof specifically.
+    # Gating this on lsof alone sent every machine without it (stock Fedora,
+    # Ubuntu Server) to the HTTP probe, which any other program on the port
+    # passes -- so the kit reported a healthy add-on it had never started.
+    if ! _dash_server_port_probe_degraded; then
         _dash_server_port_is_ours
         return $?
     fi
