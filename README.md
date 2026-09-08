@@ -9,11 +9,11 @@
 
 ### The Analytics Database for Agentic AI. Free for Personal Use.
 
-**One command. No cloud account. No license key.**
+**One command. No cloud account. No license key to enter.**
 
 [![Documentation](https://img.shields.io/badge/docs-exasol.com-blue)](https://docs.exasol.com/db/latest/home.htm)
 [![Community](https://img.shields.io/badge/community-exasol-green)](https://community.exasol.com)
-[![Quickstart](https://img.shields.io/badge/first%20query-under%202%20min-orange)](QUICKSTART.md)
+[![Quickstart](https://img.shields.io/badge/database%20ready-~2%20min-orange)](QUICKSTART.md)
 
 **macOS / Linux / WSL**
 
@@ -68,7 +68,7 @@ You already use AI. The hard part is trusting it with your data. This kit gives 
 ## Key features
 
 - 🪶 **Almost no prerequisites.** No Homebrew, Rust or Python install needed. The kit uses a suitable Python if it finds one, otherwise it installs a managed one for itself.
-- ⚡ **Database up in under 2 minutes.** The full install — sample data and AI client setup included — takes longer, notably so on Windows. Let it finish; re-running is always safe.
+- ⚡ **Database ready in about 2 minutes.** The full install — sample data and AI client setup included — takes longer, notably so on Windows. Let it finish; re-running is always safe.
 - 🔒 **Read-only AI.** Your assistant can read everything and change nothing. The database enforces it.
 - 🤖 **Support for multiple AI clients.** Claude, Codex, Cursor, GitHub Copilot, Gemini CLI, OpenCode, Continue.
 - 📊 **Sample data included.** Three sample datasets, loaded and verified for you.
@@ -92,7 +92,7 @@ Step-by-step guides: [QUICKSTART](QUICKSTART.md) · [macOS](quickstarts/macos.md
 
 ### Installing: what to expect
 
-One command does the whole install. It checks your machine, shows what it will do, and then installs the database, exapump, the MCP server, pyexasol and your AI client connections. The database is ready in about two minutes. The rest takes a few minutes more, especially on Windows. Let it finish. It is the same on macOS, Linux, WSL and Windows PowerShell.
+One command does the whole install. It checks your machine, shows what it will do, and then installs the database, exapump, the MCP server, pyexasol and your AI client connections. The database is ready in about 2 minutes. The rest takes a few minutes more, especially on Windows. Let it finish. It is the same on macOS, Linux, WSL and Windows PowerShell.
 
 At the end you get a connection panel with everything you need, and a first prompt for your AI client is on your clipboard.
 
@@ -104,7 +104,7 @@ Installing from a script or an AI agent? See [AGENTS.md](AGENTS.md).
 exakit mcp-setup
 ```
 
-A checkbox multi-select (↑/↓ to move, **Space** to toggle, **Enter** to confirm) over **Claude**, **Codex**, **Cursor**, **GitHub Copilot**, **Gemini CLI**, **OpenCode**, **Continue**, and **Skip for now**. The list is **dynamic**: clients already connected, or not installed on this machine, aren't offered. If everything found is already connected, the command says so and exits.
+A checkbox multi-select (↑/↓ to move, **Space** to toggle, **Enter** to confirm) over **Claude**, **Codex**, **Cursor**, **GitHub Copilot**, **Gemini CLI**, **OpenCode**, **Continue**, and **Skip for now**. The list is **dynamic**: every supported client is shown, and the ones already connected or not installed on this machine appear greyed out, with the reason, and cannot be selected. If everything found is already connected, the command says so and exits.
 
 The command checks the MCP connection, prints where each config lives, and gives you a first prompt to try. It writes the exact path of the local MCP launcher into the client configs, so setup does not depend on what is on each app's PATH.
 
@@ -136,7 +136,8 @@ The kit ships **three bundled datasets**, each in its own schema, so your AI cli
 
 ```bash
 exakit data-load             # bundled datasets not yet loaded, or your own data
-exakit data-load --force     # reload the bundled datasets
+exakit data-load --force     # reload TPC-H
+EXAKIT_DATASETS=tpch,energy,weather exakit data-load --force   # reload all three
 ```
 
 Your own data can be CSV, Parquet or JSON files, or a folder of them, one table each (JSON through the JSON Tables add-on, offered when needed). Uploads land in the `STARTER_KIT` schema. Details: [what's included](data/README.md) · [data dictionary](data/data-dictionary.md) · [14 example questions with reference SQL](data/example-questions.md)
@@ -161,7 +162,7 @@ exakit data-load       # load more data
 exakit mcp-setup       # connect AI clients
 exakit mcp-doctor      # AI connection health check
 exakit version         # what is installed, and what is newer
-exakit update          # apply the quick ones (seconds, no downtime)
+exakit update          # apply what is pending (asks before it stops the database)
 exakit marketplace     # optional add-ons (dashboards & more)
 exakit help            # every command
 ```
@@ -189,7 +190,7 @@ The maintainers publish one recommended set of versions in `versions.json` on th
 
 ```bash
 exakit version    # installed, recommended and status, one row per component
-exakit update     # apply everything that is pending
+exakit update     # apply what is pending (asks before it stops the database)
 ```
 
 `exakit update` refreshes the kit scripts, exapump, the MCP server, pyexasol, the agent skills and installed add-ons in seconds, with no downtime. When any update is pending, one dim line appears after other commands. Silence it for good with `EXAKIT_NO_UPDATE_NOTICE=1`, or throttle it with `EXAKIT_NOTICE_INTERVAL=86400` for at most one notice a day. A database runtime update stops the database for a minute or two, so it asks first and never runs unattended (opt in with `exakit update --yes`). Data, credentials and MCP configs are never touched, the previous kit copy is kept, and the kit never moves a component backwards.
@@ -235,7 +236,7 @@ https://github.com/user-attachments/assets/77916db0-d273-4720-8d59-1aedac95d5e8
 
 *Questions or issues: open an issue in this repository.*
 
-Community-supported. Licensed under [MIT](LICENSE). Part of [Exasol Labs 🧪](https://github.com/exasol-labs/).
+Community-supported. This kit is licensed under [MIT](LICENSE). That covers the kit's own scripts only: the Exasol database it installs is a separate product under Exasol's own licence terms. Part of [Exasol Labs 🧪](https://github.com/exasol-labs/).
 
 Continue exploring [Exasol](https://github.com/exasol).
 
