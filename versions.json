@@ -37,7 +37,7 @@
       "severity": "normal"
     },
     "skills": {
-      "version": "1.9.8",
+      "version": "1.9.9",
       "severity": "normal"
     },
     "dash-server": {
@@ -79,6 +79,11 @@
         "wheel": "e8c2468b321d1bc8f57ac124ceb06a68ba80a8f5b7830d74dc75b581980b0f81",
         "windows-x86_64": "acd0e1742864457019fe8963b8c8f429d12d7021dcab491def11870d73c93ff6"
       }
+    },
+    "dbt-exasol": {
+      "version": "1.12.1",
+      "package": "dbt-exasol",
+      "severity": "normal"
     }
   }
 }
