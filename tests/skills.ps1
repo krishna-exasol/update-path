@@ -19,7 +19,9 @@ function Check($label, $expected, $actual) {
         Write-Host "  ok   $label = $actual"
         $script:pass++
     } else {
-        Write-Host "  FAIL $label: expected '$expected', got '$actual'"
+        # ${label}, not $label: PowerShell reads "$label:" as a drive-qualified
+        # variable and refuses to parse the file at all.
+        Write-Host "  FAIL ${label}: expected '$expected', got '$actual'"
         $script:fail++
     }
 }
