@@ -501,7 +501,7 @@ nano_pull_image() {
         fi
         [ "$_npi_attempt" -lt 3 ] && { warn "Pull attempt $_npi_attempt failed — retrying in $((_npi_attempt * 10))s"; sleep $((_npi_attempt * 10)); }
     done
-    [ "$_npi_pulled" -eq 1 ] || die "Image pull failed after 3 attempts: $_npi_image (network/Docker Hub issue — see log)"
+    [ "$_npi_pulled" -eq 1 ] || die "Image pull failed after 3 attempts: $_npi_image (network/Docker Hub issue, or an invalid image reference — see log)"
     ok_step "Runtime image ready: $_npi_image"
     return 0
 }
@@ -656,10 +656,17 @@ nano_install() {
             # so instead. (Reachable when the kit home was removed but the
             # volume was not, which a partial uninstall leaves behind.)
             if [ "$_nano_volume_existed" -eq 1 ]; then
-                warn "The data volume $EXAKIT_NANO_VOLUME is being adopted, but this machine has no stored password for it."
-                info "Its SYS password lives with the install that created the volume - often this machine's other side (Windows or WSL), in ~/.exasol-starter-kit/credentials/nano_sys_password."
+                warn "Reusing the database in volume $EXAKIT_NANO_VOLUME, but this machine has no password for it."
+                info "The database keeps the SYS password set by the install that created the volume - often this machine's other side (Windows or WSL), in ~/.exasol-starter-kit/credentials/nano_sys_password."
                 info "Safest: copy that file into $EXAKIT_CREDS_DIR and re-run - the database and its data stay intact."
                 info "Last resort, if the password is truly gone: re-run with EXAKIT_REUSE_DB=0 - that DELETES the volume and every table in it."
+                # SAY WHAT HAPPENS NEXT. The install does not stop here: it mints
+                # a password so the rest of the run has something to record, and
+                # the database inside the volume has never heard of it. Without
+                # this sentence the reader is told their data is fine and then
+                # watches status, info and every AI client fail against a
+                # credential the kit itself reports as correct.
+                warn "This install continues with a NEW password the database will not accept, so exakit status, exakit info and your AI client will fail until you supply the real one."
             fi
             _password="$(generate_password)"
             store_credential nano_sys_password "$_password"

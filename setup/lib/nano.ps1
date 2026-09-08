@@ -442,7 +442,7 @@ function Test-NanoRequirements {
     try { $ramGb = [math]::Floor((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB) } catch { $ramGb = -1 }
     if ($env:EXAKIT_FORCE -ne "1") {
         if ($ramGb -lt 0) {
-            Fail "Could not determine this machine's memory. Set EXAKIT_FORCE=1 to install anyway."
+            Fail "Could not determine this machine's memory. Fix the environment or set EXAKIT_FORCE=1 to install anyway."
         } elseif ($ramGb -lt $script:NanoMinRamGb) {
             # On-grid outcome line (6-space cross), mirroring bash's error() + die() pair.
             Write-Host ("      {0}{1}{2} This machine is not compatible: Exasol Nano needs at least {3} GB RAM and this machine has {4} GB." -f $script:UiErr, $script:UiCross, $script:UiReset, $script:NanoMinRamGb, $ramGb)
@@ -734,9 +734,17 @@ function Install-Nano {
             Fail "The database password path could not be repaired automatically."
         }
         $password = Get-ExakitCredential "nano_sys_password"
+        # Whether this run MINTED the password decides whether the adopted-volume
+        # warning below applies: an adopted volume already has a password, and it
+        # is inside the volume, not here. Twin of the same branch in nano_install
+        # (runtime-nano.sh), which this side never had - Windows adopted the
+        # volume silently and then failed against a credential it reported as
+        # correct.
+        $mintedPassword = $false
         if (-not $password) {
             $password = New-ExakitPassword
             Set-ExakitCredential "nano_sys_password" $password
+            $mintedPassword = $true
         }
         $pwFile = Join-Path $script:CredsDir "nano_sys_password"
         # The twin of the guard in nano_install (runtime-nano.sh), which this
@@ -783,6 +791,18 @@ function Install-Nano {
                 Fail "Could not remove the existing data volume $($script:NanoVolume) (see log). Remove it by hand, then re-run."
             }
             $volumeExisted = $false
+        }
+
+        # An ADOPTED volume already has a password, and it is inside the volume -
+        # not here. The one this run just minted is a password the database has
+        # never heard of, so say so before the install goes on to record it.
+        # Twin of the same block in nano_install (runtime-nano.sh).
+        if ($volumeExisted -and $mintedPassword) {
+            Warn2 "Reusing the database in volume $($script:NanoVolume), but this machine has no password for it."
+            Info "The database keeps the SYS password set by the install that created the volume - often this machine's other side (WSL or Windows), in ~\.exasol-starter-kit\credentials\nano_sys_password."
+            Info "Safest: copy that file into $($script:CredsDir) and re-run - the database and its data stay intact."
+            Info "Last resort, if the password is truly gone: re-run with EXAKIT_REUSE_DB=0 - that DELETES the volume and every table in it."
+            Warn2 "This install continues with a NEW password the database will not accept, so exakit status, exakit info and your AI client will fail until you supply the real one."
         }
 
         Info "Starting Nano container ($($script:NanoContainer))"

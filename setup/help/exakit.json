@@ -55,6 +55,7 @@
       "commands": [
         "guide",
         "skills",
+        "preflight",
         "help",
         "catalog",
         "whats-new"
@@ -195,7 +196,7 @@
     {
       "command": "mcp-setup",
       "options": "",
-      "summary": "Connect your AI assistants.",
+      "summary": "Connect your AI clients.",
       "description": "Permanently configures the exasol MCP server in every supported AI client. Existing configs are backed up first. Restart the client afterwards and look for a server named exasol. Takes no options: clients are named with EXAKIT_MCP_CLIENTS (an option or argument exits 2). A client whose config no longer holds the kit's entry is offered again.",
       "environment": [
         "EXAKIT_MCP_CLIENTS=claude,codex names clients by name (never menu numbers)",
@@ -283,7 +284,7 @@
       "summary": "Apply the updates that are waiting.",
       "description": "Applies the quick components (kit scripts, exapump, MCP server, pyexasol, the AI skills, installed add-ons) in seconds. A newer skill set published by the maintainers is fetched and installed here too, with no kit release needed. A database change stops the database, so it is only applied for an answer the run was actually given: on a terminal you are asked, and an unattended run defers it with the exact command. Your data is kept either way. An unknown option or target is refused (exit 2) and records nothing.",
       "environment": [
-        "EXAKIT_CONFIRM_RUNTIME_UPDATE=1 pre-answers yes to the runtime change",
+        "EXAKIT_CONFIRM_RUNTIME_UPDATE=1 pre-answers yes to the database change",
         "EXAKIT_<COMPONENT>_VERSION pins one component by hand"
       ],
       "examples": [
@@ -296,7 +297,7 @@
       "options": "[--yes] [--json | -j]",
       "summary": "Rebuild a database that cannot start.",
       "description": "For a deployment the launcher reports interrupted where every start fails the same way. Without --yes it asks, and without a terminal the answer is no: declining changes nothing and exits 5, so a scripted caller can tell \"not confirmed\" from \"repaired\". --json answers with one object ({\"ok\", \"status\", \"changed\", \"remedy\"}) instead of the panel.",
-      "warning": "DESTRUCTIVE: the deployment is replaced and its data is not recoverable. Bundled datasets are reloaded afterwards.",
+      "warning": "DESTRUCTIVE: your database is rebuilt from empty and its data is not recoverable. Bundled datasets are reloaded afterwards.",
       "environment": [
         "EXAKIT_CONFIRM_RUNTIME_REPAIR=1 pre-answers the confirmation"
       ],
@@ -334,6 +335,15 @@
         "exakit help",
         "exakit help --all",
         "exakit help exapump"
+      ]
+    },
+    {
+      "command": "preflight",
+      "options": "",
+      "summary": "Can this machine run the kit?",
+      "description": "Checks every requirement - operating system, CPU architecture, memory, free disk, the container engine where one is needed - and prints a pass/fail line for each with the remedy inline. Installs nothing and changes nothing, so it is safe to run before an install or after one. Exits non-zero with the number of hard requirements still missing.",
+      "examples": [
+        "exakit preflight"
       ]
     },
     {

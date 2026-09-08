@@ -830,13 +830,15 @@ function Invoke-CmdRepairRuntime {
 
     # Narration never shares stdout with the JSON object.
     if ($Json) {
-        [Console]::Error.WriteLine("  ! Repairing the runtime REPLACES the database. Its data is not recoverable.")
+        [Console]::Error.WriteLine("  ! This rebuilds your database from empty. Every table in it is deleted and cannot be recovered.")
     } else {
-        Warn2 "Repairing the runtime REPLACES the database. Its data is not recoverable."
-        Info "Bundled datasets are reloaded afterwards; anything you loaded yourself is not."
+        Warn2 "This rebuilds your database from empty. Every table in it is deleted and cannot be recovered."
+        Info "The bundled sample datasets are reloaded afterwards. Anything you loaded yourself is not."
+        Info "If the database still answers, copy out anything you want to keep first, one table at a time:"
+        Info "  exakit sql --json 'SELECT * FROM <SCHEMA>.<TABLE>' > table.json"
     }
     if (-not $confirmed) {
-        if (-not (Confirm-ExakitPrompt "Delete the database and rebuild it now?" $false)) {
+        if (-not (Confirm-ExakitPrompt "Delete everything in the database and rebuild it empty?" $false)) {
             # DECLINING A DESTRUCTIVE PROMPT IS THE SAFE ANSWER, not an error.
             # Fail() rendered it as a red error card and exited 1 - and it
             # records the reason as the last failure, so `exakit status --json`
@@ -994,7 +996,7 @@ function Invoke-ExakitUninstallRun {
         } else {
             Info "Removing managed MCP configuration from AI clients"
             try { [void](Invoke-McpOperation -Operation "uninstall" -InputArgs @()) }
-            catch { Warn2 "Removing the managed MCP client config reported issues (continuing uninstall)" }
+            catch { Warn2 "Removing the managed AI client config reported issues (continuing uninstall)" }
         }
         RecordRemoved "MCP entry removed from the AI clients the kit manages: $mcpClientList"
     }
@@ -1048,7 +1050,7 @@ function Invoke-ExakitUninstallRun {
             $keep = "$($script:ExakitHome)-backups-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
             try {
                 Move-Item -Path $backupsDir -Destination $keep -ErrorAction Stop
-                Info "MCP client config snapshots kept at $keep (delete it when you are sure)"
+                Info "AI client config snapshots kept at $keep (delete it when you are sure)"
             } catch { }
         }
         if ($DryRun) { Info "  will remove: kit home $script:ExakitHome (credentials, logs, manifest, snapshots)" }
@@ -1340,7 +1342,7 @@ function Invoke-ExakitUninstallComponent {
         "mcp_configs" {
             Info "Removing the managed MCP configuration from the AI clients"
             try { [void](Invoke-McpOperation -Operation "uninstall" -InputArgs @()) }
-            catch { Warn2 "Removing the managed MCP client config reported issues" }
+            catch { Warn2 "Removing the managed AI client config reported issues" }
         }
         "skills" {
             foreach ($root in (Get-ExakitSkillRoots)) {
@@ -2002,7 +2004,7 @@ function Write-ExakitRuntimeUpdateExplanation {
         }
         "personal" {
             Info "The launcher is replaced; the database is checked afterwards and started again if it ends up down - usually under a minute."
-            Info "Your data is kept: this update neither deletes nor migrates the deployment's database content."
+            Info "Your data is kept: this update neither deletes nor migrates the tables in your database."
         }
         default {
             Info "The database goes down for the update and is started again afterwards."
@@ -2069,7 +2071,7 @@ function Invoke-ExakitRuntimeUpdateOffer {
     }
     $preanswer = Get-ExakitRuntimeUpdatePreanswer -AssumeYes $AssumeYes
     if ($preanswer -eq "no") {
-        Warn2 "$Actual $Installed -> $Advertised was left alone: the runtime update is answered 'no' (EXAKIT_CONFIRM_RUNTIME_UPDATE)."
+        Warn2 "$Actual $Installed -> $Advertised was left alone: the database update is answered 'no' (EXAKIT_CONFIRM_RUNTIME_UPDATE)."
         Info "Apply it when convenient:  exakit update"
         return $false
     }
@@ -2534,7 +2536,7 @@ function Invoke-CmdDataLoad {
 function Invoke-CmdMcpSetup {
     Assert-ExakitInstalled
     Initialize-ExakitLogging
-    if (-not (Invoke-McpSetup)) { Fail "Could not complete MCP client setup" }
+    if (-not (Invoke-McpSetup)) { Fail "Could not complete AI client setup." }
 }
 
 function Invoke-CmdMcpOperation {

@@ -5606,7 +5606,7 @@ exakit_runtime_update_explain() {
             ;;
         personal)
             info "The launcher is replaced; the database is checked afterwards and started again if it ends up down — usually under a minute."
-            info "Your data is kept: this update neither deletes nor migrates the deployment's database content."
+            info "Your data is kept: this update neither deletes nor migrates the tables in your database."
             ;;
         *)
             info "The database goes down for the update and is started again afterwards."
@@ -5683,7 +5683,7 @@ exakit_offer_runtime_update() {
             exakit_runtime_update_explain "$_oru_actual" "$_oru_cur" "$_oru_avail"
             ;;
         no)
-            warn "$_oru_actual $_oru_cur -> $_oru_avail was left alone: the runtime update is answered 'no' (EXAKIT_CONFIRM_RUNTIME_UPDATE)."
+            warn "$_oru_actual $_oru_cur -> $_oru_avail was left alone: the database update is answered 'no' (EXAKIT_CONFIRM_RUNTIME_UPDATE)."
             info "Apply it when convenient:  exakit update"
             return 1
             ;;
@@ -6314,7 +6314,7 @@ sha256_of() {
     elif command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
     else
-        die "Neither shasum nor sha256sum available for checksum verification"
+        die "Cannot verify downloads: neither shasum nor sha256sum is installed. Install coreutils (Debian/Ubuntu: apt install coreutils; Fedora/RHEL: dnf install coreutils), then re-run the installer."
     fi
 }
 
@@ -6325,7 +6325,7 @@ verify_sha256() {
         error "Checksum mismatch for $(basename "$1")"
         error "  expected: $2"
         error "  actual:   $_actual"
-        die "Refusing to continue with an unverified artifact"
+        die "The download does not match the checksum the kit expects, so it will not be used. This is usually an interrupted or proxy-modified download - re-run the installer to fetch it again. If it keeps failing, report it with the two hashes above."
     fi
     ok "Checksum verified: $(basename "$1")"
 }
@@ -6406,7 +6406,7 @@ ensure_path_hint() {
         return 0
     fi
     if { printf '\n%s\nexport PATH="%s:$PATH"\n' "$_eph_marker" "$1" >> "$_eph_profile"; } 2>/dev/null; then
-        ok "Added $1 to your PATH in $_eph_profile (new terminals pick it up automatically)"
+        ok "Added $1 to your PATH in $_eph_profile - new terminals pick it up. To undo, delete the two lines marked \"Added by the Exasol Personal Local Starter Kit\"; EXAKIT_NO_PROFILE_EDIT=1 skips this edit."
     else
         warn "$1 is not on your PATH and $_eph_profile is not writable. Add this to your shell profile:"
         printf '      %s%s%s   export PATH="%s:$PATH"\n' "${UI_DIM:-}" "${UI_VB:-|}" "${UI_RESET:-}" "$1" >&2
@@ -7190,29 +7190,29 @@ _exakit_assert_mcp_readonly_posture() {
     _exakit_exapump_sql_has_token \
         "$_config_path" "admin" \
         "SELECT CASE WHEN EXISTS (SELECT 1 FROM EXA_DBA_SYS_PRIVS WHERE GRANTEE = '$_user_lit' AND PRIVILEGE = 'CREATE SESSION') THEN 'EXAKIT_CREATE_SESSION_OK' ELSE 'EXAKIT_CREATE_SESSION_MISSING' END AS STATUS" \
-        "EXAKIT_CREATE_SESSION_OK" || die "The MCP read-only user is missing CREATE SESSION."
+        "EXAKIT_CREATE_SESSION_OK" || die "The read-only database login for your AI client is incomplete (no CREATE SESSION, so it cannot connect). Rebuild it with: exakit mcp-setup"
 
     _exakit_exapump_sql_has_token \
         "$_config_path" "admin" \
         "SELECT CASE WHEN EXISTS (SELECT 1 FROM EXA_DBA_SYS_PRIVS WHERE GRANTEE = '$_user_lit' AND PRIVILEGE = 'USE ANY SCHEMA') THEN 'EXAKIT_USE_ANY_SCHEMA_OK' ELSE 'EXAKIT_USE_ANY_SCHEMA_MISSING' END AS STATUS" \
-        "EXAKIT_USE_ANY_SCHEMA_OK" || die "The MCP read-only user is missing USE ANY SCHEMA (needed to read every schema)."
+        "EXAKIT_USE_ANY_SCHEMA_OK" || die "The read-only database login for your AI client cannot see your schemas. Rebuild it with: exakit mcp-setup"
 
     _exakit_exapump_sql_has_token \
         "$_config_path" "admin" \
         "SELECT CASE WHEN EXISTS (SELECT 1 FROM EXA_DBA_SYS_PRIVS WHERE GRANTEE = '$_user_lit' AND PRIVILEGE = 'SELECT ANY TABLE') THEN 'EXAKIT_SELECT_ANY_TABLE_OK' ELSE 'EXAKIT_SELECT_ANY_TABLE_MISSING' END AS STATUS" \
-        "EXAKIT_SELECT_ANY_TABLE_OK" || die "The MCP read-only user is missing SELECT ANY TABLE (needed to read every table)."
+        "EXAKIT_SELECT_ANY_TABLE_OK" || die "The read-only database login for your AI client cannot read your tables. Rebuild it with: exakit mcp-setup"
 
     _exakit_exapump_sql_has_token \
         "$_config_path" "admin" \
         "SELECT CASE WHEN COUNT(*) = 0 THEN 'EXAKIT_SYS_PRIV_SCOPE_OK' ELSE 'EXAKIT_SYS_PRIV_SCOPE_TOO_WIDE' END AS STATUS FROM EXA_DBA_SYS_PRIVS WHERE GRANTEE = '$_user_lit' AND PRIVILEGE NOT IN ('CREATE SESSION', 'USE ANY SCHEMA', 'SELECT ANY TABLE')" \
-        "EXAKIT_SYS_PRIV_SCOPE_OK" || die "The MCP read-only user has system privileges beyond the read-only set (CREATE SESSION, USE ANY SCHEMA, SELECT ANY TABLE)."
+        "EXAKIT_SYS_PRIV_SCOPE_OK" || die "The database login for your AI client has more than read-only access, so the kit will not hand it over. Rebuild it with: exakit mcp-setup (or check EXAKIT_MCP_READONLY_USER, which is '$_readonly_user' here, for a login you granted extra privileges to)."
 
     # No object privilege may be anything other than SELECT — i.e. the user
     # holds no INSERT/UPDATE/DELETE/ALTER/etc. object grant anywhere.
     _exakit_exapump_sql_has_token \
         "$_config_path" "admin" \
         "SELECT CASE WHEN COUNT(*) = 0 THEN 'EXAKIT_OBJ_PRIV_SCOPE_OK' ELSE 'EXAKIT_OBJ_PRIV_SCOPE_TOO_WIDE' END AS STATUS FROM EXA_DBA_OBJ_PRIVS WHERE GRANTEE = '$_user_lit' AND PRIVILEGE <> 'SELECT'" \
-        "EXAKIT_OBJ_PRIV_SCOPE_OK" || die "The MCP read-only user has a write object privilege; it must be read-only."
+        "EXAKIT_OBJ_PRIV_SCOPE_OK" || die "The database login for your AI client can write to at least one table, so the kit will not hand it over. Rebuild it with: exakit mcp-setup"
 
     # Live proof the user cannot write: creating a table in the default schema
     # (which USE ANY SCHEMA lets it OPEN) MUST be rejected, since neither read
@@ -7325,13 +7325,18 @@ _exakit_generate_sql_password_token() {
 # across future shell sessions. Works for bash, zsh, and sh.
 _exakit_add_bin_to_shell_rc() {
     _bin_dir="$1"
+    # MARKED, like ensure_path_hint's edit. An anonymous `export PATH=...` line
+    # in a dotfile is untraceable months later, and uninstall deliberately
+    # leaves the entry in place - so the marker is the only thing that tells the
+    # reader which kit put it there and what to delete.
+    _bin_marker="# Added by the Exasol Personal Local Starter Kit (exakit CLIs)"
     _export_line="export PATH=\"$_bin_dir:\$PATH\""
     
     # Prefer ~/.bashrc (most common for interactive bash shells)
     if [ -f "$HOME/.bashrc" ]; then
         if ! grep -Fq "$_bin_dir" "$HOME/.bashrc" 2>/dev/null; then
-            printf '\n%s\n' "$_export_line" >> "$HOME/.bashrc"
-            ok "Added $_bin_dir to PATH in $HOME/.bashrc"
+            printf '\n%s\n%s\n' "$_bin_marker" "$_export_line" >> "$HOME/.bashrc"
+            ok "Added $_bin_dir to PATH in $HOME/.bashrc (tagged \"Added by the Exasol Personal Local Starter Kit\" - delete that block to undo)"
         fi
         return 0
     fi
@@ -7339,8 +7344,8 @@ _exakit_add_bin_to_shell_rc() {
     # Fall back to ~/.profile (POSIX shell / login shells)
     if [ -f "$HOME/.profile" ]; then
         if ! grep -Fq "$_bin_dir" "$HOME/.profile" 2>/dev/null; then
-            printf '\n%s\n' "$_export_line" >> "$HOME/.profile"
-            ok "Added $_bin_dir to PATH in $HOME/.profile"
+            printf '\n%s\n%s\n' "$_bin_marker" "$_export_line" >> "$HOME/.profile"
+            ok "Added $_bin_dir to PATH in $HOME/.profile (tagged \"Added by the Exasol Personal Local Starter Kit\" - delete that block to undo)"
         fi
         return 0
     fi
@@ -7348,16 +7353,16 @@ _exakit_add_bin_to_shell_rc() {
     # For macOS or when ~/.bashrc doesn't exist, try ~/.zshrc
     if [ -f "$HOME/.zshrc" ]; then
         if ! grep -Fq "$_bin_dir" "$HOME/.zshrc" 2>/dev/null; then
-            printf '\n%s\n' "$_export_line" >> "$HOME/.zshrc"
-            ok "Added $_bin_dir to PATH in $HOME/.zshrc"
+            printf '\n%s\n%s\n' "$_bin_marker" "$_export_line" >> "$HOME/.zshrc"
+            ok "Added $_bin_dir to PATH in $HOME/.zshrc (tagged \"Added by the Exasol Personal Local Starter Kit\" - delete that block to undo)"
         fi
         return 0
     fi
     
     # If no startup file exists yet, create ~/.profile
     if ! grep -Fq "$_bin_dir" "$HOME/.profile" 2>/dev/null; then
-        printf '%s\n' "$_export_line" >> "$HOME/.profile"
-        ok "Added $_bin_dir to PATH in new $HOME/.profile"
+        printf '%s\n%s\n' "$_bin_marker" "$_export_line" >> "$HOME/.profile"
+        ok "Added $_bin_dir to PATH in new $HOME/.profile (tagged \"Added by the Exasol Personal Local Starter Kit\" - delete that block to undo)"
     fi
 }
 
@@ -7416,7 +7421,7 @@ exakit_configure_mcp_readonly_access() {
     esac
     
     _runtime_user="$(_exakit_manifest_runtime_value runtime.user)"
-    [ -n "$_runtime_user" ] || die "runtime.user is missing; cannot prepare the MCP read-only database user."
+    [ -n "$_runtime_user" ] || die "The install record is incomplete (no database user recorded), so the read-only login for your AI client cannot be created. Re-run the installer to rebuild it: $(exakit_install_command)"
     _runtime_password_file="$(_exakit_manifest_runtime_value runtime.password_file)"
     _admin_password=""
     if [ -n "$_runtime_password_file" ] && [ -f "$_runtime_password_file" ]; then
@@ -7438,8 +7443,8 @@ exakit_configure_mcp_readonly_access() {
     [ -n "$_admin_password" ] || die "No runtime database password is available (runtime.password_file is missing and the exapump '$EXAKIT_EXAPUMP_PROFILE' profile has none). Set it with 'exapump profile init $EXAKIT_EXAPUMP_PROFILE', then re-run."
     _host="$(_exakit_parse_runtime_host)"
     _port="$(_exakit_parse_runtime_port)"
-    [ -n "$_host" ] || die "runtime.dsn is missing a host; cannot prepare the MCP read-only database user."
-    [ -n "$_port" ] || die "runtime.dsn is missing a port; cannot prepare the MCP read-only database user."
+    [ -n "$_host" ] || die "The install record is incomplete (no database host recorded), so the read-only login for your AI client cannot be created. Re-run the installer to rebuild it: $(exakit_install_command)"
+    [ -n "$_port" ] || die "The install record is incomplete (no database port recorded), so the read-only login for your AI client cannot be created. Re-run the installer to rebuild it: $(exakit_install_command)"
 
     _readonly_user="$EXAKIT_MCP_READONLY_USER"
     # The MCP user gets database-wide READ (USE ANY SCHEMA + SELECT ANY TABLE),
@@ -7636,7 +7641,7 @@ exakit_run_mcp_setup_cli() {
     _output_file="$2"
     require_python3
     _repo_root="$(exakit_repo_root)" || {
-        warn "Could not find the MCP package source to configure MCP clients."
+        warn "Could not find the MCP package source to configure your AI clients."
         return 1
     }
     # The caller may have prepared the read-only user already: it narrates as it
@@ -7665,7 +7670,7 @@ exakit_run_mcp_setup_cli() {
         # screen before anyone could read it. die() stops the animation for the
         # same reason.
         command -v ui_animation_stop >/dev/null 2>&1 && ui_animation_stop
-        warn "MCP client setup failed (see log)."
+        warn "AI client setup failed (see log)."
         return 1
     fi
     return 0
@@ -7734,7 +7739,7 @@ exakit_run_mcp_operation_cli() {
     _snapshot_id="${4:-}"
     require_python3
     _repo_root="$(exakit_repo_root)" || {
-        warn "Could not find the MCP package source to manage MCP clients."
+        warn "Could not find the MCP package source to manage your AI clients."
         return 1
     }
     case "$_operation" in
@@ -8305,7 +8310,7 @@ exakit_ensure_runtime_running() {
                 personal_deploy_local
                 return 0
             fi
-            die "No database deployment found. Deploy one with: exakit start (or re-run the installer)"
+            die "No database found. Start one with: exakit start (or re-run the installer)"
             ;;
         nano)
             command -v nano_status >/dev/null 2>&1 || return 0
@@ -8322,7 +8327,7 @@ exakit_ensure_runtime_running() {
                 nano_install
                 return 0
             fi
-            die "No database container found. Create one with: exakit start (or re-run the installer)"
+            die "No database found. Start one with: exakit start (or re-run the installer)"
             ;;
         *) return 0 ;;
     esac
@@ -8396,7 +8401,7 @@ exakit_mcp_setup() {
     if [ -n "${EXAKIT_MCP_CLIENTS:-}" ]; then
         case "$EXAKIT_MCP_CLIENTS" in
             skip|SKIP|Skip|none|NONE|None)
-                info "Skipping MCP client setup (EXAKIT_MCP_CLIENTS=$EXAKIT_MCP_CLIENTS) — run 'exakit mcp-setup' any time."
+                info "Skipping AI client setup (EXAKIT_MCP_CLIENTS=$EXAKIT_MCP_CLIENTS) — run 'exakit mcp-setup' any time."
                 return 0
                 ;;
         esac
@@ -8688,7 +8693,7 @@ exakit_mcp_operation() {
     _operation="$1"
     shift
     _clients_csv="$(exakit_mcp_clients_from_args "$@")" || {
-        warn "Please choose valid MCP clients: claude, claude_desktop, claude_code, codex, cursor, copilot, gemini, opencode, continue, or all."
+        warn "Please choose valid AI clients: claude, claude_desktop, claude_code, codex, cursor, copilot, gemini, opencode, continue, or all."
         return 1
     }
     _result_file="$(mktemp "${TMPDIR:-/tmp}/exakit-mcp-operation.XXXXXX")"
@@ -8810,7 +8815,7 @@ exakit_maybe_offer_mcp_setup() {
     _already_done="$(manifest_get components.mcp_server.client_setup.completed 2>/dev/null || true)"
     [ "$_already_done" = "true" ] && return 0
     if [ "${EXAKIT_SKIP_MCP:-}" = "1" ]; then
-        info "Skipping MCP client setup (EXAKIT_SKIP_MCP=1). Run it any time with: exakit mcp-setup"
+        info "Skipping AI client setup (EXAKIT_SKIP_MCP=1). Run it any time with: exakit mcp-setup"
         return 0
     fi
     # Connecting an AI client is the point of the kit, so this step always
@@ -8820,7 +8825,7 @@ exakit_maybe_offer_mcp_setup() {
     # No lead-in: the ticks directly above already said the runtime and the
     # server are ready, and this restated them in a sentence.
     if ! exakit_mcp_setup; then
-        warn "Your local runtime is installed, but MCP client setup did not finish cleanly."
+        warn "Your local database is installed, but AI client setup did not finish cleanly."
         warn "Retry any time with: exakit mcp-setup"
         exakit_note_failure "the AI client configuration did not finish (see the log)"
         return 1
@@ -10095,7 +10100,7 @@ _exakit_uninstall_component() {
             info "Removing the managed MCP configuration from the AI clients"
             if command -v exakit_mcp_operation >/dev/null 2>&1; then
                 exakit_mcp_operation uninstall >/dev/null 2>&1 || \
-                    warn "Removing the managed MCP client config reported issues"
+                    warn "Removing the managed AI client config reported issues"
             fi
             ;;
         skills)
@@ -11070,7 +11075,7 @@ exakit_uninstall_run() {
         _step "managed MCP configuration in the AI clients (${_un_mcp_clients:-all managed clients})"
         if [ "$_dry" != "1" ]; then
             exakit_mcp_operation uninstall >/dev/null 2>&1 || \
-                warn "Removing the managed MCP client config reported issues (continuing uninstall)"
+                warn "Removing the managed AI client config reported issues (continuing uninstall)"
         fi
         _done "MCP entry removed from the AI clients the kit manages: ${_un_mcp_clients:-all managed clients}"
     fi
@@ -11096,7 +11101,7 @@ exakit_uninstall_run() {
         if [ "$_dry" != "1" ] && [ -d "$EXAKIT_HOME/backups" ] && [ -n "$(ls -A "$EXAKIT_HOME/backups" 2>/dev/null)" ]; then
             _un_keep="${EXAKIT_HOME}-backups-$(date +%Y%m%d-%H%M%S)"
             if mv "$EXAKIT_HOME/backups" "$_un_keep" 2>/dev/null; then
-                info "MCP client config snapshots kept at $_un_keep (delete it when you are sure)"
+                info "AI client config snapshots kept at $_un_keep (delete it when you are sure)"
             fi
         fi
         _step "kit home $EXAKIT_HOME (credentials, logs, manifest, snapshots, pyexasol venv, add-ons)"

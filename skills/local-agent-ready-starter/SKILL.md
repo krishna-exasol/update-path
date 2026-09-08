@@ -192,7 +192,8 @@ ASK  ->  INSPECT (show the SQL first)  ->  RUN (read-only)  ->  VALIDATE (indepe
    and confirm the number moves the way you'd expect.
 5. **Make it rerunnable.** Save the approved SQL to a file the user can rerun tomorrow:
    `~/.exasol-starter-kit/workflows/` exists for exactly this and is created by the install.
-   Point to the walkthrough in `~/.exasol-starter-kit/kit/demo/first-revenue-analysis.md`.
+   Tell the user the file's path and how to rerun it:
+   `exakit sql --file ~/.exasol-starter-kit/workflows/<name>.sql`.
 
 ## Non-negotiable guardrails
 

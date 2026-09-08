@@ -54,7 +54,7 @@ personal_check_requirements() {
             die "Could not determine free disk space at $HOME. Free up space or set EXAKIT_FORCE=1 to install anyway."
         fi
         if [ "$_disk" -lt "$EXAKIT_PERSONAL_MIN_DISK_GB" ]; then
-            error "This machine is not compatible right now: the deployment needs at least ${EXAKIT_PERSONAL_MIN_DISK_GB} GB free disk and $HOME has ${_disk} GB."
+            error "This machine is not compatible right now: the database needs at least ${EXAKIT_PERSONAL_MIN_DISK_GB} GB free disk and $HOME has ${_disk} GB."
             info "Nothing was installed. Free up disk space and re-run (or force at your own risk with EXAKIT_FORCE=1)."
             die "Insufficient free disk space: ${_disk} GB."
         fi
@@ -696,7 +696,7 @@ personal_deploy_local() {
     _pdl_prev_quiet="${EXAKIT_QUIET_DETAIL:-0}"
     [ -t 1 ] && EXAKIT_QUIET_DETAIL=1
 
-    info "Deploying Exasol Personal locally — super quick !"
+    info "Deploying Exasol Personal locally — about 2 minutes"
     push_rollback "$(personal_cli) destroy --remove --auto-approve || true"
 
     # The launcher's output is consumed, not shown -- see the progress helpers
@@ -704,7 +704,7 @@ personal_deploy_local() {
     # phase, the tail to print if it fails, and the EULA notice to replay if it
     # succeeds.
     _deploy_tmp="$(mktemp -d "${TMPDIR:-/tmp}/exakit-deploy.XXXXXX")" || \
-        die "Could not create a temporary directory for the deployment."
+        die "Could not create a temporary directory for the database install."
     _deploy_state="$_deploy_tmp/state"
     _deploy_tail="$_deploy_tmp/tail"
     _deploy_notice="$_deploy_tmp/notice"
@@ -837,7 +837,7 @@ print("%s:%s\t%s" % (c.get("host", "127.0.0.1"), c.get("dbPort", 8563), c.get("u
         store_credential personal_sys_password "$_password"
         manifest_set runtime.password_file "$EXAKIT_CREDS_DIR/personal_sys_password"
     else
-        warn "Could not read the database password from the deployment secrets — the exapump profile and MCP configs will ask for it or need manual completion."
+        warn "Could not read the database password from the Exasol Personal secrets — the exapump profile and AI client configs will ask for it or need manual completion."
     fi
     manifest_set runtime.tls "self-signed"
     # Never assert health without either having just seen it or probing for it.
@@ -955,31 +955,31 @@ personal_start() {
             # "Failed to start the deployment" plus a log path sent readers back
             # to `exakit start` in a loop.
             if personal_deployment_wedged >/dev/null 2>&1; then
-                die "The deployment is interrupted and cannot be started — the launcher has to rebuild it. Repair it with: $(personal_repair_command) (this replaces the deployment; its data is not recoverable)."
+                die "The database is interrupted and cannot be started — the launcher has to rebuild it. Repair it with: $(personal_repair_command) (this rebuilds the database from empty; its data is not recoverable)."
             fi
             if [ "$(personal_status 2>/dev/null)" = "conflict" ]; then
                 die "Port $EXAKIT_PERSONAL_PORT is held by another process$(personal_port_holder_hint), so the database cannot start. Stop that process, then: exakit start"
             fi
-            die "Failed to start the deployment. Check the log above, then retry with 'exakit start'; if it fails the same way, repair with: $(personal_repair_command)"
+            die "Failed to start the database. Check the log above, then retry with 'exakit start'; if it fails the same way, repair with: $(personal_repair_command)"
         fi
-        ok "Deployment started"
+        ok "Database started"
     else
         info "This launcher version has no explicit start command."
-        info "Check the deployment with: $(personal_cli) info"
+        info "Check the database with: $(personal_cli) info"
     fi
 }
 
 personal_stop() {
     if personal_launcher_supports stop; then
-        run_logged "$(personal_cli)" stop || die "Failed to stop the deployment"
+        run_logged "$(personal_cli)" stop || die "Failed to stop the database."
         manifest_set runtime.status "stopped"
         # exapump.sh caches a reachable database for the run; this run just
         # ended that. Guarded: the runtime modules load without exapump.sh.
         command -v exakit_forget_db_reachable >/dev/null 2>&1 && exakit_forget_db_reachable
-        ok "Deployment stopped"
+        ok "Database stopped"
     else
         info "This launcher version has no explicit stop command."
-        info "To remove the deployment entirely use: exakit uninstall"
+        info "To remove the database entirely use: exakit uninstall"
     fi
 }
 
@@ -989,7 +989,7 @@ personal_stop() {
 # destroying data the documented contract says would be kept.
 personal_teardown() {
     if [ "${1:-}" != "--data" ]; then
-        warn "Exasol Personal keeps the runtime and the database content in one deployment — removing it deletes all data."
+        warn "On macOS the database software and your data are one unit — removing it deletes every table you loaded."
         info "Use 'exakit stop' to stop it without deleting, or 'exakit uninstall' to remove everything."
         return 1
     fi
