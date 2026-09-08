@@ -646,6 +646,62 @@ has "the panel names the owning add-on" "with zz-never-addon" "$_gated_panel"
 lacks "...and does not prescribe skills-install for it" "exakit skills-install" "$_gated_panel"
 rm -rf "$GATEKIT"
 
+# ---------------------------------------------------------------------------
+echo
+echo "the PowerShell twin carries the same three properties:"
+# ---------------------------------------------------------------------------
+# There is no pwsh here, so these are asserted as text. Every one of them is a
+# property the shell side is exercised on for real above, and each shipped to
+# Windows unchecked before it was written down here.
+PS_SKILLS="$(cat "$ROOT/setup/lib/exakit-common.ps1")"
+
+# SKL-13: the discovery roots must be overridable, or nothing can exercise this
+# layer on Windows without writing into the developer's own ~\.claude\skills --
+# which is why tests/skills.sh has no Windows twin at all.
+_PS_ROOTS="$(awk '/^function Get-ExakitSkillRoots/,/^}/' "$ROOT/setup/lib/exakit-common.ps1")"
+has "the twin branches on EXAKIT_SKILL_ROOTS" 'if ($env:EXAKIT_SKILL_ROOTS) {' "$_PS_ROOTS"
+has "...and returns them instead of the real home" '$env:EXAKIT_SKILL_ROOTS -split' "$_PS_ROOTS"
+has "...returning the override, not falling through" 'return $roots' "$_PS_ROOTS"
+
+# SKL-02: the prune, on the Windows side. The shell retires a skill the new set
+# dropped (proven for real above); without this block Install-ExakitSkills only
+# ever PLACED, so renaming or retiring a skill left every Windows machine with
+# the old copy firing its triggers forever.
+_PS_INSTALL="$(awk '/^function Install-ExakitSkills/,/^}$/' "$ROOT/setup/lib/exakit-common.ps1")"
+has "the twin reads what it placed before" 'Get-ExakitManifestValue "components.skills.installed"' "$_PS_INSTALL"
+has "...and unplaces a name the new set no longer carries" 'Remove-ExakitSkillCopy -Name $prevName' "$_PS_INSTALL"
+has "...only when the source set really dropped it" 'if (Test-Path (Join-Path (Join-Path $skillsSrc $prevName) "SKILL.md")) { continue }' "$_PS_INSTALL"
+has "...and says so out loud" 'Ok "Retired $retired $retiredUnit the new set no longer carries"' "$_PS_INSTALL"
+
+# SKL-03: an add-on-gated skill is not counted pending on EITHER half. The shell
+# is proven above against a real fixture; the twin's pending count must exclude
+# the same rows, or Windows keeps prescribing skills-install for skills that
+# command deliberately skips.
+has "the twin reads the gating add-on"   "function Get-ExakitSkillGatingAddon" "$PS_SKILLS"
+_PS_SHOW="$(awk '/^function Show-ExakitSkills/,/^}$/' "$ROOT/setup/lib/exakit-common.ps1")"
+has "...and gives the case its own state" 'state = "needs-addon"' "$_PS_SHOW"
+has "...naming the add-on that owns it"   'remedy = "exakit marketplace $owner"' "$_PS_SHOW"
+has "...and leaves it out of the pending count" '$skjMissing = $pending' "$_PS_SHOW"
+# The gated branch must `continue` BEFORE the pending++ line, or the state word
+# changes and the count does not -- the exact half-fix this guards against.
+has "...by skipping the count entirely" "continue" \
+    "$(printf '%s\n' "$_PS_SHOW" | sed -n '/state = "needs-addon"/,/if ($state -ne "installed") { $pending++ }/p')"
+
+# ---------------------------------------------------------------------------
+echo
+echo "no two skills claim the same trigger:"
+# ---------------------------------------------------------------------------
+# A trigger list is how an agent routes a request. The same utterance in two
+# descriptions is a coin flip, and it is invisible until someone reads all
+# eleven files side by side. Keyed off the filesystem, so a new skill is
+# checked the moment it lands and no skill name appears here.
+_dupe_triggers="$(for _t_file in "$ROOT"/skills/*/SKILL.md; do
+    [ -f "$_t_file" ] || continue
+    awk '/^description:/ { print; exit }' "$_t_file" \
+        | grep -o '"[^"]*"' | sort -u | sed "s|\$| $(basename "$(dirname "$_t_file")")|"
+done | awk '{ key = $0; sub(/ [^ ]*$/, "", key); count[key]++ } END { for (k in count) if (count[k] > 1) print k }')"
+check "every trigger belongs to exactly one skill" "" "$_dupe_triggers"
+
 echo
 printf 'passed: %d, failed: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

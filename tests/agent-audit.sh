@@ -485,7 +485,7 @@ echo "R5-6. a declined destructive repair is not a success:"
 _rr="$(sed -n '/^cmd_repair_runtime()/,/^}/p' "$CLI")"
 # The window from the confirmation to the end of the declined branch: the code
 # it leaves with has to be 5, not the 0 a declined repair used to answer.
-_rr_decline="$(printf '%s\n' "$_rr" | grep -A 30 'Delete the database and rebuild it now?')"
+_rr_decline="$(printf '%s\n' "$_rr" | grep -A 30 'Delete everything in the database and rebuild it empty?')"
 has "the declined path returns a distinct non-zero code" "return 5" "$_rr_decline"
 lacks "...and no longer returns 0" "return 0" "$_rr_decline"
 has "repair-runtime takes --json" '"Unknown option '"'"'$_rr_arg'"'"' for repair-runtime (supported: --yes, --json)."' "$_rr"

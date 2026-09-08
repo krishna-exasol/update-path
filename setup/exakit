@@ -827,13 +827,15 @@ cmd_repair_runtime() {
 
     # Narration never shares stdout with the JSON object.
     if [ "$_rr_json" -eq 1 ]; then
-        warn "Repairing the runtime REPLACES the database. Its data is not recoverable." >&2
+        warn "This rebuilds your database from empty. Every table in it is deleted and cannot be recovered." >&2
     else
-        warn "Repairing the runtime REPLACES the database. Its data is not recoverable."
-        info "Bundled datasets are reloaded afterwards; anything you loaded yourself is not."
+        warn "This rebuilds your database from empty. Every table in it is deleted and cannot be recovered."
+        info "The bundled sample datasets are reloaded afterwards. Anything you loaded yourself is not."
+        info "If the database still answers, copy out anything you want to keep first, one table at a time:"
+        info "  exakit sql --json 'SELECT * FROM <SCHEMA>.<TABLE>' > table.json"
     fi
     if [ "$_rr_yes" -ne 1 ]; then
-        if ! confirm "Delete the database and rebuild it now?" n; then
+        if ! confirm "Delete everything in the database and rebuild it empty?" n; then
             # DECLINING A DESTRUCTIVE PROMPT IS THE SAFE ANSWER, not an error.
             # die() rendered it as a red error card and exited 1 - and because
             # die() calls exakit_note_failure, it also left `exakit status

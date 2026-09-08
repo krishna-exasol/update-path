@@ -56,8 +56,8 @@
     {
       "command": "exakit repair-runtime",
       "options": "[--yes]",
-      "summary": "Rebuild a deployment that cannot start.",
-      "description": "DESTRUCTIVE: the deployment is replaced and its data is not recoverable.",
+      "summary": "Rebuild a database that cannot start.",
+      "description": "DESTRUCTIVE: your database is rebuilt from empty and its data is not recoverable.",
       "examples": [
         "exakit repair-runtime"
       ]
@@ -85,7 +85,7 @@
   ],
   "notes": [
     "An existing database is adopted, running or stopped. Only one that cannot start is replaced, and the installer says so.",
-    "A runtime update recreates the container over the same data volume; the previous image is put back if the new one does not come up."
+    "A database update recreates the container over the same data volume; the previous image is put back if the new one does not come up."
   ],
   "troubleshooting": [
     {

@@ -3698,7 +3698,17 @@ function Get-ExakitAgentHome {
 }
 
 # Get-ExakitSkillRoots - the per-user discovery folders CLI agents read.
+#
+# EXAKIT_SKILL_ROOTS overrides them, exactly as it does on the shell side
+# (common.sh). Without it nothing could exercise this layer without writing into
+# the developer's own ~\.claude\skills, so the whole of tests/skills.sh had no
+# Windows twin and every drift here shipped unchecked. Separator is ';', the
+# Windows path-list convention, because a path can contain a space.
 function Get-ExakitSkillRoots {
+    if ($env:EXAKIT_SKILL_ROOTS) {
+        $roots = @($env:EXAKIT_SKILL_ROOTS -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        if ($roots.Count -gt 0) { return $roots }
+    }
     $agentHome = Get-ExakitAgentHome
     return @((Join-Path $agentHome ".claude\skills"), (Join-Path $agentHome ".agents\skills"))
 }
@@ -3880,6 +3890,22 @@ function Get-ExakitSkillState {
     return "partial"
 }
 
+# Get-ExakitSkillGatingAddon <name> - the add-on that gates this skill and is
+# NOT installed; empty when the skill is not gated, or the gate is open.
+# Twin of _exakit_skill_gating_addon (common.sh).
+function Get-ExakitSkillGatingAddon {
+    param([string]$Id)
+    $dir = Get-ExakitSkillsDir
+    if (-not $dir) { return "" }
+    $md = Join-Path (Join-Path $dir $Id) "SKILL.md"
+    if (-not (Test-Path $md)) { return "" }
+    $owner = ""
+    try { $owner = Get-ExakitSkillAddon -Path $md } catch { $owner = "" }
+    if (-not $owner) { return "" }
+    try { if (Test-ExakitMarketplaceAddonInstalled $owner) { return "" } } catch { return "" }
+    return $owner
+}
+
 # Get-ExakitKitSkillNames - which skill directories are OURS to remove. The
 # live kit list first; once the kit copy is gone (uninstall order, or a
 # hand-deleted checkout), what the install recorded. Enumerating the discovery
@@ -3916,16 +3942,31 @@ function Show-ExakitSkills {
     }
     $rows = @(Get-ExakitSkillsRegistry)
     if ($rows.Count -eq 0) {
-        Warn2 "No SKILL.md files found in this kit copy - nothing to list."
+        Warn2 "No SKILL.md files found in this kit copy."
         return $false
     }
 
+    # An add-on's skill arrives with its add-on. Calling it "available" beside
+    # advice to run skills-install prescribed a command that deliberately skips
+    # it, so a healthy machine read as half-installed forever and an agent
+    # following `next` looped. Give the case its own state, name the add-on that
+    # owns it, and leave it out of the pending count the advice is computed
+    # from. Twin of the same branch in exakit_skills_list (common.sh).
     $entries = @()
     $pending = 0
     foreach ($row in $rows) {
         $state = Get-ExakitSkillState -Id $row.Id
+        $owner = Get-ExakitSkillGatingAddon -Id $row.Id
+        if ($state -eq "available" -and $owner) {
+            $entries += [pscustomobject]@{
+                name = $row.Id; state = "needs-addon"; addon = $owner
+                remedy = "exakit marketplace $owner"; summary = $row.Summary
+                panel = "with $owner"
+            }
+            continue
+        }
         if ($state -ne "installed") { $pending++ }
-        $entries += [pscustomobject]@{ name = $row.Id; state = $state; summary = $row.Summary }
+        $entries += [pscustomobject]@{ name = $row.Id; state = $state; summary = $row.Summary; panel = $state }
     }
 
     if ($Json) {
@@ -3936,12 +3977,16 @@ function Show-ExakitSkills {
         # the manifest and the cached versions document (no network).
         $skjHave = Get-ExakitManifestValue "components.skills.version"
         $skjWant = Get-ExakitVersionsValue -Path "components.skills.version"
-        $skjMissing = @($entries | Where-Object { $_.state -ne "installed" }).Count
+        # $pending already excludes the add-on-gated rows: skills-install cannot
+        # place those, so counting them would prescribe a command that changes
+        # nothing, forever.
+        $skjMissing = $pending
         $skjStatus = "current"; $skjNext = $null
         if ($skjHave -and $skjWant -and ("$skjHave" -ne "$skjWant")) { $skjStatus = "update_pending"; $skjNext = "exakit update" }
         elseif ($skjMissing -gt 0) { $skjStatus = "missing"; $skjNext = "exakit skills-install" }
         $skjDoc = [ordered]@{
-            skills = @($entries)
+            # `panel` is the human column only; it never reaches the contract.
+            skills = @($entries | Select-Object -Property * -ExcludeProperty panel)
             installed_version = $(if ($skjHave) { "$skjHave" } else { $null })
             advertised_version = $(if ($skjWant) { "$skjWant" } else { $null })
             status = $skjStatus
@@ -3954,7 +3999,7 @@ function Show-ExakitSkills {
     Write-Host ""
     Start-ExakitPanel "Exasol skills"
     foreach ($entry in $entries) {
-        Write-ExakitPanelLine ("{0,-26} {1,-10} {2}" -f $entry.name, $entry.state, $entry.summary)
+        Write-ExakitPanelLine ("{0,-26} {1,-22} {2}" -f $entry.name, $entry.panel, $entry.summary)
     }
     # Stale beats pending in the advice: copies that exist but predate a kit
     # update are the case a user cannot see for themselves, and the remedy is
@@ -4016,6 +4061,29 @@ function Install-ExakitSkills {
     if ($installed -eq 0) { Warn2 "No SKILL.md files found under $skillsSrc - nothing to install."; return $false }
     if ($installed -eq 1) { $skillUnit = "AI skill" } else { $skillUnit = "AI skills" }
     Ok "Installed $installed $skillUnit for Claude Code (~\.claude\skills) and open-standard agents (~\.agents\skills)"
+
+    # A skill the NEW set no longer carries leaves the discovery roots with the
+    # update: it was placed by the kit - the manifest's installed list is the
+    # proof - and left behind it keeps firing its triggers forever for a
+    # workflow this kit no longer ships. Only recorded names are touched; the
+    # roots also hold skills the user installed themselves, which the kit must
+    # never remove. Twin of the same block in exakit_install_skills (common.sh),
+    # which this side never had - rename or retire a skill and every Windows
+    # machine kept the old copy indefinitely.
+    $retired = 0
+    $previous = @()
+    try { $previous = @(Get-ExakitManifestValue "components.skills.installed") } catch { $previous = @() }
+    foreach ($prevName in $previous) {
+        $prevName = "$prevName".Trim()
+        if (-not $prevName) { continue }
+        if (Test-Path (Join-Path (Join-Path $skillsSrc $prevName) "SKILL.md")) { continue }
+        Remove-ExakitSkillCopy -Name $prevName
+        Write-ExakitLog "OK" "Retired skill: $prevName (no longer in the kit's skill set)"
+        $retired++
+    }
+    if ($retired -eq 1) { $retiredUnit = "skill" } else { $retiredUnit = "skills" }
+    if ($retired -gt 0) { Ok "Retired $retired $retiredUnit the new set no longer carries" }
+
     # Record what was placed and which skill-set version it is - twin of the
     # record the shell has always written. Without it a Windows install could
     # never say its skills were stale, and a full uninstall had no list of its own.
@@ -4028,7 +4096,7 @@ function Install-ExakitSkills {
         # are allowlisted, still says so.
         Write-ExakitLog "INFO" "Read-only command allowlist already present in ~\.claude\settings.json."
     } elseif ($applied -like "ADDED *") {
-        Ok "Read-only exakit commands allowlisted in ~\.claude\settings.json (status, info, version, mcp-doctor, logs; uninstall stays gated)."
+        Ok "Read-only exakit commands allowlisted in ~\.claude\settings.json (status, info, version, mcp-doctor, logs, catalog, preflight, guide, mcp-status, skills; uninstall stays gated)."
     } else {
         Warn2 "~\.claude\settings.json could not be merged safely ($applied) - the allowlist in skills/reducing-agent-prompts.md shows what to add by hand."
     }
@@ -4067,7 +4135,7 @@ function Confirm-ExakitRuntimeRunning {
         Install-Nano
         return
     }
-    Fail "No database container found. Create one with: exakit start (or re-run the installer)"
+    Fail "No database found. Start one with: exakit start (or re-run the installer)"
 }
 
 # ---------------------------------------------------------------------------
