@@ -1173,6 +1173,18 @@ exakit_ensure_uv() {
         EXAKIT_UV_BIN="$EXAKIT_BIN_DIR/uv"
         return 0
     fi
+    # A READ-ONLY STATE QUERY INSTALLS NOTHING. `exakit status --json` is
+    # documented as a state query, and on a stock macOS (system python3 is
+    # 3.9.6, below the tomllib floor) the very first one used to arrive here
+    # and download a 36 MB binary into the user's ~/.local/bin, over the
+    # network, with no prompt and no mention in AGENTS.md. Report "no
+    # interpreter" instead and let the caller degrade honestly; every command
+    # that may CHANGE the machine (install, update, mcp-setup) still
+    # bootstraps.
+    if [ "${EXAKIT_READONLY_QUERY:-0}" = "1" ]; then
+        _exakit_log_file "INFO  uv bootstrap skipped: this is a read-only state query"
+        return 1
+    fi
     # Narration to STDERR, always: this bootstrap runs lazily from inside
     # run_python, including in the MIDDLE of composing a --json answer — on a
     # stock macOS with no Python 3.11+, the very first `exakit status --json`
@@ -1214,6 +1226,34 @@ run_python() {
 exakit_can_run_python() {
     _exakit_has_system_python3 && return 0
     exakit_ensure_uv >/dev/null 2>&1
+}
+
+# run_python_any — run a script on ANY Python 3 that is already on the machine.
+#
+# run_python holds the kit to EXAKIT_MIN_PYTHON (3.11) because exactly ONE
+# thing needs it: the MCP client-config writer parses TOML with the stdlib's
+# tomllib. Reading the manifest and composing a --json answer need `json` and
+# nothing else — but they went through the same gate, so on a stock macOS
+# (python3 3.9.6) every state query fell through to the uv bootstrap: a
+# documented read-only command downloading 36 MB, and — until that narration
+# moved to stderr — splicing its progress lines into the very value it was
+# computing, which is how `runtime.type` came back as a multi-line blob.
+# Anything that needs only the standard library runs here instead.
+run_python_any() {
+    if [ "${EXAKIT_DISABLE_SYSTEM_PYTHON:-0}" != "1" ] && command -v python3 >/dev/null 2>&1; then
+        python3 "$@"
+        return $?
+    fi
+    run_python "$@"
+}
+
+# Is there any Python 3 at all? Never installs one from a read-only query
+# (exakit_ensure_uv enforces that); callers degrade instead of failing.
+exakit_can_run_python_any() {
+    if [ "${EXAKIT_DISABLE_SYSTEM_PYTHON:-0}" != "1" ] && command -v python3 >/dev/null 2>&1; then
+        return 0
+    fi
+    exakit_can_run_python
 }
 
 manifest_init() {
@@ -1483,9 +1523,17 @@ PY
 }
 
 # manifest_get <dot.path> — prints the value; exits non-zero if missing.
+#
+# Reads through run_python_any: parsing this file needs `json`, not 3.11, and
+# routing it through the 3.11 gate is what made `exakit status` install uv on
+# a stock Mac. With no interpreter at all a read-only query answers "missing"
+# rather than dying; everything else still gets the explicit failure.
 manifest_get() {
-    require_python3
-    run_python - "$EXAKIT_MANIFEST" "$1" <<'PY'
+    if ! exakit_can_run_python_any; then
+        [ "${EXAKIT_READONLY_QUERY:-0}" = "1" ] && return 1
+        die "A Python runtime is required, and the automatic uv bootstrap failed."
+    fi
+    run_python_any - "$EXAKIT_MANIFEST" "$1" <<'PY'
 import json, sys
 path, key = sys.argv[1], sys.argv[2]
 try:
@@ -1520,8 +1568,11 @@ PY
 # way is a DSN, a username or a path; if that ever stops being true, this is
 # the line-oriented assumption that breaks.
 manifest_get_many() {
-    require_python3
-    run_python - "$EXAKIT_MANIFEST" "$@" <<'PY'
+    if ! exakit_can_run_python_any; then
+        [ "${EXAKIT_READONLY_QUERY:-0}" = "1" ] && return 1
+        die "A Python runtime is required, and the automatic uv bootstrap failed."
+    fi
+    run_python_any - "$EXAKIT_MANIFEST" "$@" <<'PY'
 import json, sys
 path, keys = sys.argv[1], sys.argv[2:]
 try:

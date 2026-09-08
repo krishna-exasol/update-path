@@ -566,6 +566,15 @@ function Write-DashServerUsagePanel {
     Complete-ExakitPanel
 }
 
+# Get-DashServerUrl - the one address everything about this add-on hangs off.
+# Optional registry hook (UrlFn); twin of dash_server_url. `status --json`
+# surfaces it under `urls`, so an agent finally has a JSON key for the URL
+# instead of parsing the human screen or guessing the port.
+function Get-DashServerUrl {
+    Resolve-DashServerPort
+    return "http://127.0.0.1:$($script:DashServerPort)"
+}
+
 # Get-DashServerSummary - the one fact worth a place on the result line.
 # Optional registry hook (SummaryFn); twin of dash_server_summary.
 function Get-DashServerSummary {

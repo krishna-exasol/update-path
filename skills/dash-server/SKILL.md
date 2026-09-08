@@ -32,9 +32,12 @@ install **moves to the next free one and records it** — so read the real port
 from the machine rather than assuming:
 
 ```bash
-exakit info        # dash-server's recorded port
-exakit status      # running / stopped per service
+exakit status --json    # .urls["dash-server"] is the full URL; .services["dash-server"] is running / stopped
+exakit info --json      # .components.dash_server.port — the recorded port
 ```
+
+The plain `exakit info` panel does **not** carry the port; it is in the JSON,
+and `status --json` carries the whole URL ready to hand to the user.
 
 Move it deliberately with:
 
