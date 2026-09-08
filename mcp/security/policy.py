@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-import getpass
-import os
-import stat
-import subprocess
 from urllib.parse import urlparse
 
 from mcp.core.models import DeploymentMode, Finding, OperationRequest, Severity
+from mcp.runtime.filesystem import protect_path
 
 
 class SecurityPolicy:
@@ -103,31 +100,8 @@ class SecurityPolicy:
     def apply_managed_permissions(self, path: Path) -> str | None:
         if not (path.exists() and path.is_file()):
             return None
-        # On Windows, chmod() only toggles the read-only attribute: the client
-        # configs and snapshots this protects (each carrying the read-only
-        # database password) kept whatever ACL they inherited, and the "0600"
-        # this returned reported a protection that never happened. The real
-        # mechanism there is an ACL stripped of inheritance and granted to the
-        # current user alone - the same posture Protect-ExakitFile takes for
-        # every credential the PowerShell half writes.
-        if os.name == "nt":
-            username = os.environ.get("USERNAME") or getpass.getuser()
-            try:
-                subprocess.run(
-                    [
-                        "icacls", str(path),
-                        "/inheritance:r",
-                        "/grant:r", f"{username}:F",
-                    ],
-                    check=True,
-                    capture_output=True,
-                    timeout=30,
-                )
-            except (OSError, subprocess.SubprocessError):
-                # Best-effort, like the chmod branch: a failed tightening must
-                # not fail the write it protects - but it must not be REPORTED
-                # as applied either.
-                return None
-            return "owner-only-acl"
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-        return format(stat.S_IMODE(path.stat().st_mode), "04o")
+        # One implementation of "owner-only" for the whole Python runtime, in
+        # mcp.runtime.filesystem: the snapshot copies and the directories they
+        # live in have to be protected the same way this is, and two copies of
+        # an icacls invocation is how they drift apart.
+        return protect_path(path)

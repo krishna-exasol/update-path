@@ -1014,8 +1014,15 @@ has "...and the skills update does too"      '.skills-stage-' "$_ps_common_w"
 lacks "no stage directory lives in TEMP" 'GetTempPath()) "exakit-kit-stage' "$_ps_common_w"
 # WIN-08: chmod is a no-op on Windows; the Python runtime protects secrets
 # with an owner-only ACL there and never reports a protection it did not apply.
-has "the python runtime uses an ACL on Windows" '"icacls", str(path)' "$(cat "$ROOT/mcp/security/policy.py")"
-has "...and posix keeps the 0600 chmod" 'stat.S_IRUSR | stat.S_IWUSR' "$(cat "$ROOT/mcp/security/policy.py")"
+# protect_path in mcp/runtime/filesystem.py is the single implementation - the
+# snapshot copies and the directories holding them need the same thing the
+# client configs do, and a second copy of the icacls call is how they drift.
+_py_fs="$(cat "$ROOT/mcp/runtime/filesystem.py")"
+has "the python runtime uses an ACL on Windows" '"icacls", str(path)' "$_py_fs"
+has "...and posix keeps the 0600 chmod" 'stat.S_IRUSR | stat.S_IWUSR' "$_py_fs"
+has "...and the security policy shares it" 'return protect_path(path)' "$(cat "$ROOT/mcp/security/policy.py")"
+has "snapshot copies are protected too" 'protect_path(target)' "$_py_fs"
+has "...and so are the directories holding them" 'protect_path(directory)' "$(cat "$ROOT/mcp/runtime/paths.py")"
 # WSL-04: the after-a-restart promise names WSL's exception instead of lying.
 has "the restart promise carries the WSL exception" "WSL is the exception" "$(cat "$ROOT/AGENTS.md")"
 # WSL-06: the WSL launch wrapper is a command plus arguments, never one string.

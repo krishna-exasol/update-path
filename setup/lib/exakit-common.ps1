@@ -101,6 +101,20 @@ function Test-ExakitLocalPath {
     }
 }
 
+# Get-ExakitProfileHome - the local Windows user profile, which is what every
+# tool OUTSIDE PowerShell means by "home": exapump.exe reads its profile from
+# %USERPROFILE%\.exapump\config.toml, uv's installer drops uv.exe in
+# %USERPROFILE%\.local\bin, and Claude Code/Codex read their skills out of
+# %USERPROFILE%. PowerShell's $HOME comes from the account's home-directory
+# attribute instead, so on a domain machine with a redirected home the two are
+# different directories and anything the kit builds from $HOME is written where
+# the tool that has to read it never looks. $HOME is the fallback only where
+# USERPROFILE is unset (non-Windows PowerShell).
+function Get-ExakitProfileHome {
+    if ($env:USERPROFILE) { return $env:USERPROFILE }
+    return $HOME
+}
+
 # Get-ExakitHomeBase - the directory the kit's own state hangs off.
 #
 # PowerShell's $HOME comes from the account's home-directory attribute, which on
@@ -1042,9 +1056,18 @@ function Get-ExakitUvBin {
     if ($cmd) { $script:UvBin = $cmd.Source; return $script:UvBin }
     $candidate = Join-Path $script:BinDir "uv.exe"
     if (Test-Path $candidate) { $script:UvBin = $candidate; return $script:UvBin }
-    $candidate = Join-Path $HOME ".local\bin\uv.exe"
+    # Where uv's own Windows installer puts it: %USERPROFILE%\.local\bin, NOT
+    # PowerShell's $HOME. Probing $HOME on a redirected home meant the kit
+    # installed uv and then could not find the binary it had just installed.
+    $candidate = Get-ExakitUvInstallerBin
     if (Test-Path $candidate) { $script:UvBin = $candidate; return $script:UvBin }
     return $null
+}
+
+# The path uv's own installer writes uv.exe to. One definition, so the probe,
+# the retry and the failure message can never name three different directories.
+function Get-ExakitUvInstallerBin {
+    return (Join-Path (Get-ExakitProfileHome) ".local\bin\uv.exe")
 }
 
 function Install-ExakitUv {
@@ -1064,10 +1087,10 @@ function Install-ExakitUv {
     }
     $bin = Get-ExakitUvBin
     if (-not $bin) {
-        $candidate = Join-Path $HOME ".local\bin\uv.exe"
+        $candidate = Get-ExakitUvInstallerBin
         if (Test-Path $candidate) { $bin = $candidate; $script:UvBin = $bin }
     }
-    if (-not $bin) { Fail "uv installed but its binary was not found in $HOME\.local\bin." }
+    if (-not $bin) { Fail "uv installed but its binary was not found in $(Split-Path (Get-ExakitUvInstallerBin) -Parent)." }
     Ok "uv installed at $bin"
     return $bin
 }
@@ -2581,6 +2604,20 @@ function Get-ExakitCmdShimContent {
     return "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"$target`" %*`r`n"
 }
 
+# Get-ExakitOemEncoding - the console code page cmd.exe reads a batch file in.
+# One resolution for both halves of the shim: the writer used it and the
+# currency check did not, so on a non-ASCII path the check decoded OEM bytes as
+# ANSI, never matched, and answered "not current" on every single run.
+# $null on a machine whose OEM code page cannot be resolved; both callers then
+# fall back to their pre-OEM behaviour rather than losing the shim.
+function Get-ExakitOemEncoding {
+    try {
+        return [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    } catch {
+        return $null
+    }
+}
+
 function Set-ExakitCmdShim {
     param([Parameter(Mandatory)][string]$PsTarget)
     New-Item -ItemType Directory -Force -Path $script:BinDir | Out-Null
@@ -2593,8 +2630,7 @@ function Set-ExakitCmdShim {
     # Set-Content's 5.1 default is the ANSI code page, which is the one code page
     # cmd.exe will not be using. A machine whose OEM code page cannot be resolved
     # falls back to the old behaviour rather than losing the shim.
-    $oem = $null
-    try { $oem = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { }
+    $oem = Get-ExakitOemEncoding
     if ($oem) { [System.IO.File]::WriteAllText($shimPath, $content, $oem) }
     else { Set-Content -Path $shimPath -Value $content -NoNewline }
     return $shimPath
@@ -2612,8 +2648,24 @@ function Test-ExakitCmdShimCurrent {
     param([Parameter(Mandatory)][string]$PsTarget)
     $shimPath = Join-Path $script:BinDir "exakit.cmd"
     if (-not (Test-Path $shimPath)) { return $false }
-    $actual = Get-Content -Path $shimPath -Raw -ErrorAction SilentlyContinue
-    return ($actual -eq (Get-ExakitCmdShimContent -PsTarget $PsTarget))
+    $content = Get-ExakitCmdShimContent -PsTarget $PsTarget
+    # Compared as BYTES against what Set-ExakitCmdShim would write, in the same
+    # encoding it writes with. Get-Content -Raw decodes in the ANSI code page on
+    # 5.1 - precisely the one the writer exists to avoid - so the two halves
+    # disagreed by construction the moment the shim held a non-ASCII path.
+    $oem = Get-ExakitOemEncoding
+    try {
+        $actualBytes = [System.IO.File]::ReadAllBytes($shimPath)
+    } catch {
+        return $false
+    }
+    if ($oem) { $expectedBytes = $oem.GetBytes($content) }
+    else { $expectedBytes = [System.Text.Encoding]::Default.GetBytes($content) }
+    if ($actualBytes.Length -ne $expectedBytes.Length) { return $false }
+    for ($i = 0; $i -lt $expectedBytes.Length; $i++) {
+        if ($actualBytes[$i] -ne $expectedBytes[$i]) { return $false }
+    }
+    return $true
 }
 
 # ---------------------------------------------------------------------------
@@ -3025,6 +3077,9 @@ function Update-ExakitSkills {
 function Update-ExakitSelf {
     param([Parameter(Mandatory)][string]$Advertised, [string]$Installed = "")
     $repo = $script:KitRepo
+    # A previous run's deferred swap may have landed after that process exited;
+    # take its version into the manifest before deciding what to do next.
+    Sync-ExakitDeferredKitUpdate
     $kitDir = Join-Path $script:ExakitHome "kit"
     $shown = $Installed
     if (-not $shown) { $shown = "unknown" }
@@ -3044,6 +3099,7 @@ function Update-ExakitSelf {
     # so a kit installed from a tagged release still updates.
     $refs = @("main", "v$Advertised", "$Advertised")
     $kitRef = ""
+    $proxyHint = ""
     foreach ($ref in $refs) {
         if ($ref -eq "main") { $url = "https://github.com/$repo/archive/refs/heads/main.zip" }
         else { $url = "https://github.com/$repo/archive/refs/tags/$ref.zip" }
@@ -3051,11 +3107,13 @@ function Update-ExakitSelf {
             Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing -TimeoutSec 300
             $kitRef = $ref
             break
-        } catch { }
+        } catch {
+            if (-not $proxyHint) { $proxyHint = Get-ExakitProxyHint "$_" }
+        }
     }
     if (-not $kitRef) {
         Remove-Item -Force $tmpZip -ErrorAction SilentlyContinue
-        Fail "Could not download the starter kit from github.com/$repo (tried main and the $Advertised tags)."
+        Fail "Could not download the starter kit from github.com/$repo (tried main and the $Advertised tags).$proxyHint"
     }
 
     try {
@@ -3126,11 +3184,41 @@ function Update-ExakitSelf {
         return
     }
 
-    Complete-ExakitSelfUpdateDeferred -StagedRoot $stagedRoot -KitDir $kitDir -Backup $backup
-    Set-ExakitManifestValue "kit.source" "$repo@$kitRef"
-    Set-ExakitManifestValue "kit.version" $stagedVersion
+    # NOT recorded here. The swap has not happened yet and may still fail, and a
+    # manifest that claims a version the disk does not have is unrecoverable:
+    # `exakit version` reports current, `exakit update` sees nothing to do, and
+    # the user is pinned to an old kit that believes it is new. The detached
+    # process leaves the completion note below only after the rename returns,
+    # and the next command adopts it (Sync-ExakitDeferredKitUpdate).
+    Complete-ExakitSelfUpdateDeferred -StagedRoot $stagedRoot -KitDir $kitDir -Backup $backup `
+        -Version $stagedVersion -Source "$repo@$kitRef"
     Ok "exakit $stagedVersion is staged and will be in place the moment this command exits."
     Info "The next `exakit` you run is the new one. Nothing else was changed."
+}
+
+# Where the deferred finisher says the swap actually happened. Two lines: the
+# version, then the kit source. Written only after the rename returned.
+$script:KitUpdateNotePath = Join-Path $script:ExakitHome ".kit-update-complete"
+
+# Sync-ExakitDeferredKitUpdate - adopt the version a deferred swap landed after
+# the process that started it had already exited. The note is the proof the
+# rename succeeded; without it the manifest keeps the version that is genuinely
+# on disk, so a failed deferred swap leaves `exakit update` willing to try
+# again instead of reporting a version nobody has.
+function Sync-ExakitDeferredKitUpdate {
+    if (-not (Test-Path $script:KitUpdateNotePath)) { return }
+    try {
+        $lines = @(Get-Content -Path $script:KitUpdateNotePath -ErrorAction Stop |
+                   ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+        # The note is removed only once the manifest has taken it: a write that
+        # fails (locked manifest, disk full) has to be retried next command
+        # rather than lose the version the swap actually landed.
+        if ($lines.Count -ge 1) { Set-ExakitManifestValue "kit.version" $lines[0] }
+        if ($lines.Count -ge 2) { Set-ExakitManifestValue "kit.source" $lines[1] }
+        Remove-Item -Force $script:KitUpdateNotePath -ErrorAction SilentlyContinue
+    } catch {
+        Write-ExakitLog "WARN" "Could not adopt the deferred kit update note: $_"
+    }
 }
 
 # Finish the swap from a short-lived detached PowerShell that first waits for this
@@ -3141,7 +3229,9 @@ function Complete-ExakitSelfUpdateDeferred {
     param(
         [Parameter(Mandatory)][string]$StagedRoot,
         [Parameter(Mandatory)][string]$KitDir,
-        [Parameter(Mandatory)][string]$Backup
+        [Parameter(Mandatory)][string]$Backup,
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string]$Source
     )
     $waitPids = @($PID)
     try {
@@ -3155,14 +3245,23 @@ function Complete-ExakitSelfUpdateDeferred {
     $q1 = $KitDir -replace "'", "''"
     $q2 = $Backup -replace "'", "''"
     $q3 = $StagedRoot -replace "'", "''"
+    $q4 = $script:KitUpdateNotePath -replace "'", "''"
+    $q5 = $Version -replace "'", "''"
+    $q6 = $Source -replace "'", "''"
     # Only the directory swap is deferred; the shim was already written by the
     # caller, and its target path is the same before and after.
+    #
+    # The note is written ONLY on the line after a Move-Item that did not throw,
+    # so its existence is proof the new kit is on disk. Nothing writes
+    # kit.version before this point; the next command reads the note and records
+    # the version then (Sync-ExakitDeferredKitUpdate).
     $deferred = @"
 foreach (`$id in @($pidList)) { try { Wait-Process -Id `$id -Timeout 120 -ErrorAction SilentlyContinue } catch {} }
 Start-Sleep -Milliseconds 500
 try {
     if (Test-Path '$q1') { Move-Item -Force -Path '$q1' -Destination '$q2' -ErrorAction Stop }
     Move-Item -Force -Path '$q3' -Destination '$q1' -ErrorAction Stop
+    Set-Content -Path '$q4' -Value @('$q5', '$q6') -ErrorAction SilentlyContinue
 } catch {
     if (-not (Test-Path '$q1') -and (Test-Path '$q2')) {
         Move-Item -Force -Path '$q2' -Destination '$q1' -ErrorAction SilentlyContinue
@@ -3182,6 +3281,60 @@ try {
 # ---------------------------------------------------------------------------
 # Downloads and verification
 # ---------------------------------------------------------------------------
+# Initialize-ExakitWebProxy - make the documented proxy remedy true for every
+# download in every module, from one place.
+#
+# Windows PowerShell 5.1's Invoke-WebRequest/Invoke-RestMethod are
+# HttpWebRequest on .NET Framework: they take their proxy from
+# WebRequest.DefaultWebProxy - the WinINET/Internet Options system proxy - and
+# NEVER read HTTP_PROXY/HTTPS_PROXY (that is PowerShell 7's HttpClient stack).
+# So the quickstart's "set $env:HTTPS_PROXY before running" did nothing on the
+# one path it was written for, and an authenticating proxy answered every
+# download with 407 because DefaultWebProxy is handed no credentials.
+#
+# Setting the process-wide default here fixes BOTH, and fixes them for the
+# twenty-odd Invoke-WebRequest call sites across the add-on modules without any
+# of them passing -Proxy: they inherit it. Two cases:
+#   - HTTPS_PROXY (or EXAKIT_PROXY) set: use it, with the signed-in Windows
+#     credentials, so the documented remedy becomes real.
+#   - nothing set: keep the system proxy and just give it those credentials,
+#     which is what turns a 407 into a successful download on a corporate
+#     network that already has the proxy in Internet Options.
+# EXAKIT_NO_PROXY=1 opts out of both and leaves .NET's defaults untouched.
+function Initialize-ExakitWebProxy {
+    if ($env:EXAKIT_NO_PROXY -eq "1") { return }
+    try {
+        $url = $env:EXAKIT_PROXY
+        if (-not $url) { $url = $env:HTTPS_PROXY }
+        if (-not $url) { $url = $env:HTTP_PROXY }
+        if ($url) {
+            $proxy = New-Object System.Net.WebProxy($url, $true)
+            if ($env:NO_PROXY) {
+                $bypass = @($env:NO_PROXY -split "," | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+                if ($bypass.Count -gt 0) {
+                    $proxy.BypassList = @($bypass | ForEach-Object { [regex]::Escape($_) + "$" })
+                }
+            }
+            $proxy.UseDefaultCredentials = $true
+            [System.Net.WebRequest]::DefaultWebProxy = $proxy
+            return
+        }
+        $current = [System.Net.WebRequest]::DefaultWebProxy
+        if ($current) { $current.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials }
+    } catch { }
+}
+Initialize-ExakitWebProxy
+
+# Get-ExakitProxyHint - the extra sentence a download failure earns when the
+# PROXY refused it. A raw "(407) Proxy Authentication Required" sends the reader
+# off to debug their internet connection; naming the variable that fixes it is
+# the whole remedy. Empty for every other failure, so nothing else changes.
+function Get-ExakitProxyHint {
+    param([AllowEmptyString()][string]$ErrorText)
+    if ("$ErrorText" -notmatch "407") { return "" }
+    return " The PROXY refused this, not the server (HTTP 407, authentication required): set `$env:HTTPS_PROXY to your proxy's address and re-run, or ask IT for one that accepts your Windows sign-in."
+}
+
 function Get-ExakitFile {
     param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Dest)
     New-Item -ItemType Directory -Force -Path (Split-Path $Dest -Parent) | Out-Null
@@ -3196,6 +3349,12 @@ function Get-ExakitFile {
             break
         } catch {
             Remove-Item -Force $Dest -ErrorAction SilentlyContinue
+            $proxyHint = Get-ExakitProxyHint "$_"
+            # A 407 is the proxy, not the network: retrying it three times only
+            # wastes 15 seconds before saying the same thing.
+            if ($proxyHint) {
+                Fail "Download failed: $Url ($_).$proxyHint"
+            }
             if ($attempt -ge 3) {
                 Fail "Download failed after $attempt attempts: $Url ($_)"
             }
@@ -3310,22 +3469,16 @@ function Copy-ExakitAsset {
 # ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
+# Ensure-ExakitOnPath - kept as the name mcp.ps1 calls; one behaviour, not two.
+#
+# There used to be two of these. Ensure- PREPENDED and skipped the persistent
+# write whenever the directory was already on the session PATH; Confirm-
+# APPENDED and guarded on the persistent entry list. Which one ran first decided
+# whether the kit's own exakit.cmd or some other exakit on PATH won, which is
+# not a thing to leave to call order.
 function Ensure-ExakitOnPath {
     param([Parameter(Mandatory)][string]$Dir)
-    $path = $env:Path -split ";"
-    if ($path -notcontains $Dir) {
-        # Update current session
-        $env:Path = "$Dir;$env:Path"
-        # Update permanent user-level environment variable
-        $userPath = [System.Environment]::GetEnvironmentVariable("PATH", [System.EnvironmentVariableTarget]::User)
-        if ($userPath -notlike "$Dir;*" -and $userPath -notlike "*;$Dir;*" -and $userPath -notlike "*;$Dir") {
-            $newPath = "$Dir;$userPath"
-            [System.Environment]::SetEnvironmentVariable("PATH", $newPath, [System.EnvironmentVariableTarget]::User)
-            Ok "Added $Dir to PATH (user environment variable - permanent)"
-        } else {
-            Ok "Added $Dir to current session PATH"
-        }
-    }
+    Confirm-ExakitOnPath $Dir
 }
 
 function Confirm-ExakitOnPath {
@@ -3334,23 +3487,36 @@ function Confirm-ExakitOnPath {
     # PATH by default, so a hint alone leaves exakit unreachable in every
     # new terminal. Add the directory to the USER PATH (no admin needed,
     # idempotent) the way other user-scope installers (uv, cargo) do.
+    #
+    # PREPENDED, matching ensure_path_hint in common.sh, so the kit's own
+    # binaries win over an older copy of the same name further down PATH.
+    #
+    # The session PATH is fixed either way: EXAKIT_NO_PATH_EDIT only governs the
+    # persistent registry value, exactly as EXAKIT_NO_PROFILE_EDIT governs only
+    # the shell-profile line on the other side.
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $userEntries = ($userPath -split ";") | Where-Object { $_ }
+    $userEntries = @(($userPath -split ";") | Where-Object { $_ })
     if ($userEntries -notcontains $Dir) {
-        try {
-            $newUserPath = if ($userPath) { "$userPath;$Dir" } else { $Dir }
-            [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
-            Ok "Added $Dir to your user PATH (new terminals pick it up automatically)"
-        } catch {
-            Warn2 "$Dir could not be added to your PATH automatically."
-            Write-Host "    Add it in Settings -> System -> About -> Advanced system settings -> Environment Variables,"
-            Write-Host "    or run: `$env:Path += `";$Dir`" (current session only)"
+        if ($env:EXAKIT_NO_PATH_EDIT -eq "1") {
+            Warn2 "$Dir is not on your PATH, and EXAKIT_NO_PATH_EDIT=1 says not to change it."
+            Write-Host "    Call the kit by its full path ($Dir\exakit.cmd), or add the directory yourself:"
+            Write-Host "    `$env:Path = `"$Dir;`" + `$env:Path (current session only)"
+        } else {
+            try {
+                if ($userPath) { $newUserPath = "$Dir;$userPath" } else { $newUserPath = $Dir }
+                [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+                Ok "Added $Dir to your user PATH (new terminals pick it up automatically)"
+            } catch {
+                Warn2 "$Dir could not be added to your PATH automatically."
+                Write-Host "    Add it in Settings -> System -> About -> Advanced system settings -> Environment Variables,"
+                Write-Host "    or run: `$env:Path += `";$Dir`" (current session only)"
+            }
         }
     }
-    # Make it work in THIS session too (the machine-wide change only
+    # Make it work in THIS session too (the persistent change only
     # affects newly started processes).
     if (($env:Path -split ";") -notcontains $Dir) {
-        $env:Path += ";$Dir"
+        $env:Path = "$Dir;" + $env:Path
     }
 }
 
@@ -3528,8 +3694,7 @@ function Remove-ExakitReadonlyAllowlist {
 # under $HOME lands where no agent ever reads. Every agent-facing path below
 # builds on this. (WIN-04's worst casualties: the skills and the allowlist.)
 function Get-ExakitAgentHome {
-    if ($env:USERPROFILE) { return $env:USERPROFILE }
-    return $HOME
+    return (Get-ExakitProfileHome)
 }
 
 # Get-ExakitSkillRoots - the per-user discovery folders CLI agents read.
@@ -5215,6 +5380,10 @@ function Get-ExakitComponentCurrent {
     param([string]$Component)
     switch ($Component) {
         "exakit" {
+            # A swap finished by the deferred mover after the last command exited
+            # is recorded now, before anything reads kit.version - that write is
+            # the one the update itself deliberately did not make.
+            Sync-ExakitDeferredKitUpdate
             # kit.version is written by the installer; the kit.source parse is the
             # fallback for installs made before that, and the kit copy's own
             # manifest is the last resort (kit.source is usually "<repo>@main",
