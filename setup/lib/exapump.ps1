@@ -13,7 +13,11 @@
 
 $script:ExapumpProfile = if ($env:EXAKIT_EXAPUMP_PROFILE) { $env:EXAKIT_EXAPUMP_PROFILE } else { "starter-kit" }
 $script:ExapumpBinPath = Join-Path $script:BinDir "exapump.exe"
-$script:ExapumpConfigPath = Join-Path $HOME ".exapump\config.toml"
+# %USERPROFILE%, not PowerShell's $HOME - exapump.exe resolves its profile from
+# the former and nothing passes --config or EXAPUMP_CONFIG, so on a domain
+# machine with a redirected home the kit wrote H:\.exapump\config.toml while the
+# binary read C:\Users\<you>\.exapump\config.toml and reported no such profile.
+$script:ExapumpConfigPath = Join-Path (Get-ExakitProfileHome) ".exapump\config.toml"
 
 # Test-ExapumpSucceeded - decide whether an exapump invocation succeeded.
 #

@@ -72,7 +72,10 @@ function Get-McpConfiguredClients {
 function Get-UvxPath {
     $cmd = Get-Command uvx -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
-    foreach ($dir in @($script:BinDir, (Join-Path $HOME ".local\bin"))) {
+    # The second candidate is where uv's own installer writes: that is
+    # %USERPROFILE%\.local\bin, not PowerShell's $HOME, which on a redirected
+    # home is a directory nothing ever installed into.
+    foreach ($dir in @($script:BinDir, (Join-Path (Get-ExakitProfileHome) ".local\bin"))) {
         $candidate = Join-Path $dir "uvx.exe"
         if (Test-Path $candidate) { return $candidate }
     }
