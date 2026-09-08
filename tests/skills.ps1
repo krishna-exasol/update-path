@@ -89,28 +89,43 @@ Check "default is .agents"  "C:\fake-profile\.agents\skills" "$($roots[1])"
 
 Write-Host "Get-ExakitSkillField:"
 
-# UTF-8 without a BOM, because that is what the repo's SKILL.md files are and
-# 5.1 would otherwise decode them as the system ANSI codepage. The em dash is
-# the character that exposes it: every description in this kit carries one.
-$skillMd = @(
-    "---",
-    "name: demo-skill",
-    "description: A demo skill - with an em dash: " + [char]0x2014 + " and a colon.",
-    "addon: dash-server",
-    "---",
-    "",
-    "# Body"
-)
+# READ THE FILES THAT ACTUALLY SHIP, not a fixture. This function exists to
+# parse the repo's own SKILL.md frontmatter, and the thing that breaks it on
+# 5.1 is decoding: a BOM-less UTF-8 file read with the system ANSI codepage
+# turns every em dash into two characters, and every description in this kit
+# carries one. A synthetic file proves nothing the real ones do not.
+$real = Join-Path $repo "skills\exakit-lifecycle\SKILL.md"
+Check "the shipped skill file is there" "True" "$(Test-Path $real)"
+Check "its name is read" "exakit-lifecycle" (Get-ExakitSkillField -Path $real -Field "name")
+$desc = Get-ExakitSkillField -Path $real -Field "description"
+$emdash = [string][char]0x2014
+Check "the description is not empty" "True" "$($desc.Length -gt 40)"
+Check "the em dash survived 5.1's decoding" "True" "$($desc.Contains($emdash))"
+Check "nothing after the first colon was lost" "True" "$($desc.TrimEnd().EndsWith('.'))"
+# On failure, say WHAT came back rather than only that it was wrong. The code
+# points are the whole diagnosis for an encoding fault, and a mangled string
+# often prints as nothing at all in a CI log. Printed only when something is
+# already wrong, so a green run stays quiet.
+if (-not $desc.Contains($emdash)) {
+    $codes = (($desc.ToCharArray() | Select-Object -First 80 | ForEach-Object { [int]$_ }) -join ",")
+    Write-Host "       description length=$($desc.Length) first-80-codepoints=$codes"
+}
+
+# A second real file, so the check is not one file's luck.
+$real2 = Join-Path $repo "skills\exasol-runtime\SKILL.md"
+if (Test-Path $real2) {
+    Check "a second shipped skill parses too" "exasol-runtime" (Get-ExakitSkillField -Path $real2 -Field "name")
+}
+
+# The two not-found paths, which need no fixture content at all.
+Check "a missing field is empty, not an error" "" (Get-ExakitSkillField -Path $real -Field "nosuch")
+Check "a missing file is empty, not an error"  "" (Get-ExakitSkillField -Path (Join-Path $src "gone\SKILL.md") -Field "name")
+
+# A minimal skill to place and retire below. ASCII only: what is being tested
+# from here on is file movement, not decoding.
 $one = Join-Path $src "demo-skill"
 New-Item -ItemType Directory -Force -Path $one | Out-Null
-[System.IO.File]::WriteAllLines((Join-Path $one "SKILL.md"), $skillMd, (New-Object System.Text.UTF8Encoding($false)))
-
-Check "name is read" "demo-skill" (Get-ExakitSkillField -Path (Join-Path $one "SKILL.md") -Field "name")
-$desc = Get-ExakitSkillField -Path (Join-Path $one "SKILL.md") -Field "description"
-Check "the em dash survives 5.1's decoding" "yes" $(if ($desc -match ([char]0x2014)) { "yes" } else { "no ($desc)" })
-Check "a description with a colon is not truncated" "yes" $(if ($desc.EndsWith("and a colon.")) { "yes" } else { "no ($desc)" })
-Check "a missing field is empty, not an error" "" (Get-ExakitSkillField -Path (Join-Path $one "SKILL.md") -Field "nosuch")
-Check "a missing file is empty, not an error"  "" (Get-ExakitSkillField -Path (Join-Path $src "gone\SKILL.md") -Field "name")
+Set-Content -Path (Join-Path $one "SKILL.md") -Value "---`nname: demo-skill`n---" -Encoding Ascii
 
 Write-Host "Copy-ExakitSkill / Remove-ExakitSkillCopy:"
 
