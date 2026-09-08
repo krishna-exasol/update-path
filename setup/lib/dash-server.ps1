@@ -770,8 +770,8 @@ function Get-DashServerAutostartCommand {
 # the instance state, the launcher, and the manifest record. -DryRun only
 # narrates the plan. Best-effort and idempotent. Twin of dash_server_uninstall.
 function Uninstall-DashServer {
-    Resolve-DashServerPort
     param([switch]$DryRun)
+    Resolve-DashServerPort
     # A running server holds its port and would outlive its own files.
     if (-not $DryRun) { [void](Stop-DashServer) }
     foreach ($path in @($script:DashServerVenv, $script:DashServerHome, (Get-DashServerLauncherPath))) {
