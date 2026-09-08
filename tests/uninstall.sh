@@ -170,6 +170,60 @@ case "$_uout" in
     *)  check "exakit uninstall dash-server is a real target" "accepted" "accepted" ;;
 esac
 
+# --- the shared-engine hazard is stated BEFORE the typed gate --------------
+# THE BUG: on a Windows+WSL machine the container and the data volume are
+# shared, so `exakit uninstall` in WSL deletes the Windows install's database.
+# The kit did warn about it — from inside _exakit_uninstall_component, i.e.
+# AFTER the user had typed UNINSTALL, and the confirmation itself named neither
+# the container nor the volume. The one sentence that could have changed the
+# answer arrived once the answer could no longer be changed.
+echo
+echo "the shared-engine hazard precedes the typed gate:"
+_menu_body="$(awk '/^exakit_uninstall_menu\(\)/{f=1} f{print} f&&/^}$/{if(f)exit}' "$ROOT/setup/lib/common.sh")"
+_warn_at="$(printf '%s\n' "$_menu_body" | grep -n '_exakit_shared_engine_db_warning' | head -1 | cut -d: -f1)"
+_gate_at="$(printf '%s\n' "$_menu_body" | grep -n 'to remove the items above' | head -1 | cut -d: -f1)"
+check "the menu carries the warning"  "yes" "$([ -n "$_warn_at" ] && echo yes || echo no)"
+check "the menu carries the gate"     "yes" "$([ -n "$_gate_at" ] && echo yes || echo no)"
+if [ -n "$_warn_at" ] && [ -n "$_gate_at" ] && [ "$_warn_at" -lt "$_gate_at" ]; then
+    check "warning before gate" "yes" "yes"
+else
+    check "warning before gate" "yes" "no (warn=${_warn_at:-none} gate=${_gate_at:-none})"
+fi
+# ...and the confirmation names the two things the engine actually deletes.
+case "$_menu_body" in
+    *"Nano container '"*"data volume '"*) _um_named=yes ;;
+    *) _um_named=no ;;
+esac
+check "the confirmation names container and volume" "yes" "$_um_named"
+
+# The warning itself, run: it must name the recorded container AND volume, and
+# it must be silent on a platform that does not share an engine.
+_sew() { # _sew <os> — the warning's output for that platform
+    ROOT="$ROOT" OS="$1" bash <<'HARNESS'
+set -u
+manifest_get() {
+    case "$1" in
+        runtime.type)      echo nano ;;
+        runtime.container) echo exasol-nano-wsl ;;
+        runtime.volume)    echo exasol-nano-wsl-data ;;
+        *) echo "" ;;
+    esac
+}
+detect_os() { echo "$OS"; }
+warn() { printf '%s\n' "$*"; }
+eval "$(awk '/^_exakit_nano_target_names\(\)/{f=1} f{print} f&&/^}$/{if(f)exit}' "$ROOT/setup/lib/common.sh")"
+eval "$(awk '/^_exakit_shared_engine_db_warning\(\)/{f=1} f{print} f&&/^}$/{if(f)exit}' "$ROOT/setup/lib/common.sh")"
+_exakit_shared_engine_db_warning || true
+HARNESS
+}
+_sew_wsl="$(_sew wsl)"
+case "$_sew_wsl" in
+    *exasol-nano-wsl*exasol-nano-wsl-data*) _sew_ok=yes ;;
+    *) _sew_ok="no: ${_sew_wsl:-<silent>}" ;;
+esac
+check "the warning names both, from the manifest" "yes" "$_sew_ok"
+check "and stays quiet on plain Linux" "" "$(_sew linux)"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

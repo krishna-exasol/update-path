@@ -789,7 +789,16 @@ function Install-Nano {
         if ($volumeExisted) {
             # An adopted volume gets neither the init options nor the secret
             # mount: the database and its password already live inside it.
-            Info "Adopting the existing database volume $($script:NanoVolume) (its data and password are kept)"
+            #
+            # InfoStep, not Info: this branch runs inside the one-line quiet
+            # window, which sends Info to the LOGFILE only - so the single most
+            # consequential sentence on the shared-engine path (THIS INSTALL DID
+            # NOT CREATE THE DATABASE IT IS ABOUT TO USE) was invisible, while
+            # the warning about its missing password printed. The reader got the
+            # consequence without the sentence that explains it.
+            # <-> twin: nano_install in runtime-nano.sh.
+            InfoStep "Adopting the existing database volume $($script:NanoVolume) - this install did not create it, and its data and SYS password are kept as they are."
+            InfoStep "On a Windows+WSL machine this volume is often a WSL install's database: Docker Desktop is one engine shared by both sides."
             $code = Invoke-ExakitLogged $engine "run" "-d" "--label" "com.exasol.exakit.os=windows" "--name" $script:NanoContainer `
                 "--shm-size=512mb" "--pids-limit=-1" `
                 "-p" "127.0.0.1:$($script:DbPort):8563" `

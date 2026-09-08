@@ -1619,6 +1619,156 @@ else
 fi
 
 echo
+# ---------------------------------------------------------------------------
+# Naming the process that holds a port, on a machine WITHOUT lsof.
+# ---------------------------------------------------------------------------
+# THE BUG: port_holder_desc bailed out unless lsof was installed. lsof is on
+# every macOS and on no minimal Linux (Fedora @core, Ubuntu Server), so on
+# exactly the hosts most likely to be running something else on 8563 the
+# remedy degraded back to the unactionable "stop it" the naming was added to
+# replace. ss (iproute2) is there instead, and net-tools' netstat on older
+# images.
+echo "port holder identification without lsof:"
+phd_stub="$(mktemp -d)"
+cat > "$phd_stub/ss" <<'EOF'
+#!/bin/sh
+echo 'State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process'
+echo 'LISTEN 0      4096   127.0.0.1:8563      0.0.0.0:*         users:(("some-server",pid=4242,fd=6))'
+EOF
+chmod +x "$phd_stub/ss"
+# lsof is not merely absent, it FAILS: the stub dir is prepended to the real
+# PATH, so a developer machine's real lsof would otherwise answer for it.
+printf '#!/bin/sh\nexit 1\n' > "$phd_stub/lsof" && chmod +x "$phd_stub/lsof"
+got="$(PATH="$phd_stub:$PATH" bash -c ". '$ROOT/setup/lib/detect.sh'; port_holder_desc 8563")"
+case "$got" in "pid 4242 ("*) got_r="named" ;; *) got_r="${got:-<nothing>}" ;; esac
+check "port_holder_desc(ss, no lsof)" "named" "$got_r"
+
+# net-tools only: ss present but silent, lsof failing.
+printf '#!/bin/sh\nexit 0\n' > "$phd_stub/ss" && chmod +x "$phd_stub/ss"
+cat > "$phd_stub/netstat" <<'EOF'
+#!/bin/sh
+echo 'Active Internet connections (only servers)'
+echo 'tcp        0      0 127.0.0.1:8563          0.0.0.0:*               LISTEN      4243/some-server'
+EOF
+chmod +x "$phd_stub/netstat"
+got="$(PATH="$phd_stub:$PATH" bash -c ". '$ROOT/setup/lib/detect.sh'; port_holder_desc 8563")"
+case "$got" in "pid 4243 ("*) got_r="named" ;; *) got_r="${got:-<nothing>}" ;; esac
+check "port_holder_desc(netstat only)" "named" "$got_r"
+
+# Nothing can tell: the function must fail cleanly rather than invent a holder.
+printf '#!/bin/sh\nexit 0\n' > "$phd_stub/netstat" && chmod +x "$phd_stub/netstat"
+got="$(PATH="$phd_stub:$PATH" bash -c ". '$ROOT/setup/lib/detect.sh'; port_holder_desc 8563 || echo UNKNOWN")"
+check "port_holder_desc(nothing available)" "UNKNOWN" "$got"
+rm -rf "$phd_stub"
+
+# The bash side of the WSL port remedy, whose PowerShell half tests/deploy-
+# progress.sh has asserted since 12cc3a1: inside a distro no local tool can see
+# a Windows-side holder, so the remedy has to say where to look.
+grep -q 'Get-NetTCPConnection -LocalPort' "$ROOT/setup/lib/runtime-nano.sh" && \
+    check "the shell names the Windows-side probe" "yes" "yes" || \
+    check "the shell names the Windows-side probe" "yes" "no"
+grep -q 'wsl --shutdown' "$ROOT/setup/lib/runtime-nano.sh" && \
+    check "...and the relay case" "yes" "yes" || \
+    check "...and the relay case" "yes" "no"
+
+echo
+# ---------------------------------------------------------------------------
+# install.sh refuses a bash-less machine BEFORE it downloads anything.
+# ---------------------------------------------------------------------------
+# THE BUG: install.sh is POSIX sh but every script it hands off to is bash. With
+# no `command -v bash` check it downloaded and unpacked the whole kit and then
+# died at `exec bash` with the shell's own "exec: bash: not found" — past fail(),
+# so not even the .last-failure note an agent reads in the next session existed.
+echo "install.sh requires bash:"
+bash_stub="$(mktemp -d)"
+bash_home="$(mktemp -d)"
+for _tool in sh id curl tar mkdir date cat uname grep sed; do
+    _p="$(command -v "$_tool")" && ln -s "$_p" "$bash_stub/$_tool" 2>/dev/null
+done
+_iout="$(PATH="$bash_stub" HOME="$bash_home" EXAKIT_HOME="$bash_home/kit-home" \
+    "$bash_stub/sh" "$ROOT/install.sh" 2>&1)"
+_icode=$?
+case "$_iout" in *"bash is required"*) _ir="refused" ;; *) _ir="$(printf '%s' "$_iout" | head -n 1)" ;; esac
+check "install.sh(no bash on PATH)" "refused" "$_ir"
+check "install.sh(no bash) exit code" "1" "$_icode"
+# ...and it refused before fetching: nothing was written into the kit dir.
+check "install.sh(no bash) downloaded nothing" "no" \
+    "$([ -d "$bash_home/kit-home/kit" ] && echo yes || echo no)"
+# The failure IS recorded, which is the whole point of failing through fail().
+check "install.sh(no bash) left a note" "yes" \
+    "$([ -s "$bash_home/kit-home/.last-failure" ] && echo yes || echo no)"
+rm -rf "$bash_stub" "$bash_home"
+
+echo
+# ---------------------------------------------------------------------------
+# The container argv, for both engines.
+# ---------------------------------------------------------------------------
+# Engine SELECTION was covered thoroughly above; what the chosen engine is
+# actually handed was not, so the one place the deploy branches (the SELinux
+# label on the password secret) had no test at all — and it used to branch on
+# the engine name rather than on SELinux, which silently broke Docker on Fedora.
+echo "nano container argv:"
+nano_argv() { # nano_argv <engine> <selinux-enforcing 0|1>
+    ROOT="$ROOT" ENGINE="$1" ENFORCE="$2" bash <<'HARNESS' 2>/dev/null
+set -u
+SB="$(mktemp -d)"
+trap 'rm -rf "$SB"' EXIT
+# The engine binary is called directly for `volume inspect`; a stub that says
+# "no such volume" puts the run on the first-deploy branch.
+mkdir -p "$SB/bin" "$SB/credentials"
+printf '#!/bin/sh\nexit 1\n' > "$SB/bin/$ENGINE" && chmod +x "$SB/bin/$ENGINE"
+PATH="$SB/bin:$PATH"
+export EXAKIT_CREDS_DIR="$SB/credentials"
+printf 'secret' > "$EXAKIT_CREDS_DIR/nano_sys_password"
+EXAKIT_DB_PORT=8563
+. "$ROOT/setup/lib/runtime-nano.sh"
+# Everything outside the argv construction is stubbed, so what the run prints
+# is exactly what the engine would have been handed.
+info(){ :; }; ok(){ :; }; warn(){ :; }; error(){ :; }
+ok_step(){ :; }; info_step(){ :; }; _exakit_log_file(){ :; }
+die(){ printf 'die: %s\n' "$*"; exit 1; }
+push_rollback(){ :; }; nano_pull_image(){ :; }; nano_wait_ready(){ :; }
+nano_record_manifest(){ :; }; nano_repair_creds(){ :; }
+read_credential(){ cat "$EXAKIT_CREDS_DIR/$1" 2>/dev/null; }
+generate_password(){ printf 'secret'; }; store_credential(){ :; }
+detect_os(){ echo linux; }
+nano_engine(){ printf '%s' "$ENGINE"; }
+nano_image_ref(){ printf 'exasol/nano:test'; }
+nano_container_exists(){ return 1; }
+nano_container_running(){ return 1; }
+port_in_use(){ return 1; }
+_exakit_selinux_enforcing(){ [ "$ENFORCE" = "1" ]; }
+run_logged(){ printf '%s\n' "$*"; }
+nano_install
+HARNESS
+}
+_argv_podman="$(nano_argv podman 0 | grep ' run -d ' | head -1)"
+_argv_docker="$(nano_argv docker 0 | grep ' run -d ' | head -1)"
+_argv_selinux="$(nano_argv docker 1 | grep ' run -d ' | head -1)"
+
+case "$_argv_podman" in *"-p 127.0.0.1:8563:8563"*) _r=yes ;; *) _r=no ;; esac
+check "argv binds loopback only" "yes" "$_r"
+case "$_argv_podman" in *"-v exasol-nano-data:/exa"*) _r=yes ;; *) _r=no ;; esac
+check "argv mounts the named volume" "yes" "$_r"
+case "$_argv_podman" in *"--label com.exasol.exakit.os=linux"*) _r=yes ;; *) _r=no ;; esac
+check "argv stamps the creating platform" "yes" "$_r"
+case "$_argv_podman" in *"--shm-size=512mb"*"--pids-limit=-1"*) _r=yes ;; *) _r=no ;; esac
+check "argv carries the image's limits" "yes" "$_r"
+case "$_argv_podman" in *"init sys_password_file=/run/secrets/sys_password"*) _r=yes ;; *) _r=no ;; esac
+check "a first deploy passes init" "yes" "$_r"
+# The label keys on SELINUX, not on the engine name: podman without SELinux
+# must NOT get it, and docker with SELinux must.
+case "$_argv_podman" in *"/run/secrets/sys_password:ro,z"*) _r=labelled ;; *) _r=plain ;; esac
+check "podman without SELinux: no ,z" "plain" "$_r"
+case "$_argv_selinux" in *"/run/secrets/sys_password:ro,z"*) _r=labelled ;; *) _r=plain ;; esac
+check "docker with SELinux: ,z" "labelled" "$_r"
+# Nothing else may differ between the two engines. Each run gets its own
+# sandbox, so the secret's absolute path is normalised away first.
+_norm() { printf '%s' "$1" | sed 's|-v /[^ ]*/credentials/nano_sys_password:|-v CREDS:|'; }
+check "podman and docker argv agree" \
+    "$(_norm "${_argv_docker#docker }")" "$(_norm "${_argv_podman#podman }")"
+
+echo
 
 # ---------------------------------------------------------------------------
 # No test may write into a real installation.
