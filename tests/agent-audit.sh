@@ -345,5 +345,231 @@ has "install.sh stamps its start" 'EXAKIT_INSTALL_T0="$(date +%s)"' "$(cat "$ROO
 has "setup logs the elapsed bootstrap" 'after the installer began' "$(cat "$ROOT/setup/setup-macos.sh")"
 has "...on the WSL path too" 'after the installer began' "$(cat "$ROOT/setup/setup-wsl.sh")"
 
+# --- Round 5 (agent-operability audit, round 2 of the 0.2.4 series) ---------
+#
+# THE FIXTURE THIS SUITE NEVER HAD. Every check above builds its manifest with
+# `"runtime": {"type": "personal"}` already set, so the whole pre-runtime state
+# - an installer that stopped before it deployed a database - was untested, and
+# a fix that touched only the Windows prose could ship green while every other
+# channel still sent an agent to `exakit start`, a command that in that state
+# can only fail. This section owns that state.
+PRE="$WORK/prerun"
+mkdir -p "$PRE"
+cat > "$PRE/manifest.json" <<'JSON'
+{"manifest_version": 1, "kit_level": 2, "installed_at": "2026-09-07T10:00:00Z",
+ "kit": {"version": "0.2.4", "source": "example/kit@main"},
+ "install": {"current_step": "runtime"},
+ "components": {}, "steps_completed": ["launcher"]}
+JSON
+# A DEAD installer: a lock naming a pid that is not running.
+printf '%s\n' "999999" > "$PRE/.install.lock"
+pre() { EXAKIT_HOME="$PRE" bash "$CLI" "$@"; }
+pre_rc() { EXAKIT_HOME="$PRE" bash "$CLI" "$@" >/dev/null 2>&1; echo $?; }
+
+echo "R5-1. with no runtime recorded, every channel names the installer, not exakit start:"
+_pre_sj="$(pre status --json 2>/dev/null)"
+check "status --json is one object" "yes" "$(printf '%s' "$_pre_sj" | python3 -m json.tool >/dev/null 2>&1 && echo yes || echo no)"
+check "top-level status is a documented word, not 'unknown'" "no database" \
+    "$(printf '%s' "$_pre_sj" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])' 2>/dev/null)"
+check "installed is true - the KIT is installed, the DATABASE is not" "True" \
+    "$(printf '%s' "$_pre_sj" | python3 -c 'import json,sys; print(json.load(sys.stdin)["installed"])' 2>/dev/null)"
+check "a dead lock is not 'installing', and install_step survives it" "False|runtime" \
+    "$(printf '%s' "$_pre_sj" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s|%s" % (d["installing"], d["install_step"]))' 2>/dev/null)"
+check "remedies.install names the re-run (AGENTS.md promises exactly this)" "yes" \
+    "$(printf '%s' "$_pre_sj" | python3 -c 'import json,sys; print("yes" if "install" in json.load(sys.stdin)["remedies"] else "no")' 2>/dev/null)"
+check "the hoisted remedy is the installer, RUNNABLE, never exakit start" "runnable-install-command" \
+    "$(printf '%s' "$_pre_sj" | python3 -c 'import json,sys
+r = json.load(sys.stdin)["remedy"]
+print("runnable-install-command" if r and r.startswith(("curl ", "irm ")) else r)' 2>/dev/null)"
+check "remedies.database is the installer too, not exakit start" "yes" \
+    "$(printf '%s' "$_pre_sj" | python3 -c 'import json,sys
+d = json.load(sys.stdin)["remedies"]
+print("yes" if d.get("database", "").startswith(("curl ", "irm ")) else d.get("database"))' 2>/dev/null)"
+_pre_prose="$(pre status 2>&1)"
+lacks "the human screen no longer prescribes exakit start" "Start it:" "$_pre_prose"
+has "...it names the installer instead" "Deploy it:" "$_pre_prose"
+has "...and says where the install stopped" "did not finish at step: runtime" "$_pre_prose"
+has "the PowerShell twin answers 'not installed' for a runtime-less kit too" \
+    'default { "not installed" }' "$(cat "$ROOT/setup/exakit.ps1")"
+has "...and its screen names the installer for that state" 'Write-Host "Deploy it:' "$(cat "$ROOT/setup/exakit.ps1")"
+
+echo "R5-2. every remedy is a runnable command; the prose lives in remedy_hints:"
+check "no remedy in the pre-runtime state is an English sentence" "all-runnable" \
+    "$(printf '%s' "$_pre_sj" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+bad = [k for k, v in d["remedies"].items() if not v.startswith(("exakit ", "curl ", "irm "))]
+print("all-runnable" if not bad else "prose: %s" % ",".join(bad))' 2>/dev/null)"
+check "the hints are there, keyed the same way" "yes" \
+    "$(printf '%s' "$_pre_sj" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if set(d["remedy_hints"]) <= set(d["remedies"]) and d["remedy_hints"] else "no")' 2>/dev/null)"
+_ps="$(cat "$ROOT/setup/exakit.ps1")"
+has "the twin builds remedy_hints too" 'remedy_hints    = $remedyHints' "$_ps"
+lacks "...and no longer puts the installing sentence inside remedy" \
+    'remedy = "exakit status --json   (the installer is still running' "$_ps"
+lacks "...nor the step prose inside remedy" \
+    '"re-run the installer (it resumes at the unfinished step)"' "$_ps"
+has "the twin's not-installed answer is a runnable command" 'remedy    = (Get-ExakitInstallCommand)' "$_ps"
+has "AGENTS.md states the runnable-remedy contract" "is a command you can run verbatim, or " "$(cat "$ROOT/AGENTS.md")"
+
+echo "R5-3. a failed QUERY is not a failed install step - it writes nothing:"
+BARE="$WORK/bare-home"
+_bare_out="$(EXAKIT_HOME="$BARE" bash "$CLI" sql --json 'SELECT 1' 2>/dev/null)"
+_bare_rc="$(EXAKIT_HOME="$BARE" bash "$CLI" sql --json 'SELECT 1' >/dev/null 2>&1; echo $?)"
+check "sql --json on a bare machine still answers JSON" "False" \
+    "$(printf '%s' "$_bare_out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["installed"])' 2>/dev/null)"
+check "...with the documented not-installed code, not 1" "4" "$_bare_rc"
+check "no .last-failure was written" "absent" "$([ -f "$BARE/.last-failure" ] && echo present || echo absent)"
+check "no logs/ tree was created" "absent" "$([ -d "$BARE/logs" ] && echo present || echo absent)"
+EXAKIT_HOME="$BARE" bash "$CLI" mcp-status --json >/dev/null 2>&1
+check "mcp-status leaves the same machine untouched" "absent" \
+    "$([ -f "$BARE/.last-failure" ] || [ -d "$BARE/logs" ] && echo present || echo absent)"
+has "_require_install checks the manifest BEFORE it opens a log" \
+    "NOTHING IS WRITTEN BEFORE THE MANIFEST CHECK" "$(cat "$CLI")"
+
+echo "R5-4. a read-only state query installs nothing, and degrades honestly:"
+has "exakit_ensure_uv refuses to bootstrap under a read-only query" \
+    'if [ "${EXAKIT_READONLY_QUERY:-0}" = "1" ]; then' "$(sed -n '/^exakit_ensure_uv()/,/^}/p' "$ROOT/setup/lib/common.sh")"
+has "manifest reads no longer go through the 3.11 gate" "run_python_any" \
+    "$(sed -n '/^manifest_get()/,/^}/p' "$ROOT/setup/lib/common.sh")"
+NOPY="$WORK/nopy"; NOPYBIN="$WORK/nopy-bin"
+mkdir -p "$NOPY" "$NOPYBIN"
+cp "$EXAKIT_MANIFEST" "$NOPY/manifest.json"
+# STOCK MACOS, EXACTLY: no interpreter the kit will use and no uv anywhere, so
+# the only way to answer is to download one - which is what a state query must
+# never do. A stub PATH is what makes this a real test rather than a grep: with
+# a uv on the machine's PATH the bootstrap short-circuits and proves nothing.
+NOPYPATH="$WORK/nopy-path"; mkdir -p "$NOPYPATH"
+for _bin in bash sh env sed awk grep cat tr cut sort head tail date mkdir rm chmod ls wc printf uname id dirname basename mktemp find stat; do
+    _src="$(command -v "$_bin" 2>/dev/null || true)"
+    [ -n "$_src" ] && ln -sf "$_src" "$NOPYPATH/$_bin"
+done
+# A curl that downloads nothing and leaves a fingerprint. The point of the
+# assertion below is that this file is never created: a read-only state query
+# must not so much as REACH for the network, let alone install 36 MB from it.
+printf '#!/bin/sh\n: > "%s"\n' "$WORK/uv-download-attempted" > "$NOPYPATH/curl"
+chmod +x "$NOPYPATH/curl"
+_nopy="$(EXAKIT_HOME="$NOPY" EXAKIT_BIN_DIR="$NOPYBIN" EXAKIT_DISABLE_SYSTEM_PYTHON=1 \
+    PATH="$NOPYPATH" bash "$CLI" status --json 2>/dev/null)"
+check "no state query ever reached for the uv download" "absent" \
+    "$([ -f "$WORK/uv-download-attempted" ] && echo present || echo absent)"
+check "with no usable interpreter the answer is still one JSON object" "yes" \
+    "$(printf '%s' "$_nopy" | python3 -m json.tool >/dev/null 2>&1 && echo yes || echo no)"
+check "...carrying the three contract keys" "yes" \
+    "$(printf '%s' "$_nopy" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if all(k in d for k in ("installed","status","remedy")) else "no")' 2>/dev/null)"
+check "...and NOTHING was installed into the bin dir" "empty" \
+    "$([ -z "$(ls -A "$NOPYBIN" 2>/dev/null)" ] && echo empty || echo "$(ls -A "$NOPYBIN")")"
+
+echo "R5-5. the state queries agree on installed and on the exit code:"
+_pre_doc="$(pre mcp-doctor --json 2>/dev/null)"
+check "mcp-doctor --json agrees with status --json on installed" "True" \
+    "$(printf '%s' "$_pre_doc" | python3 -c 'import json,sys; print(json.load(sys.stdin)["installed"])' 2>/dev/null)"
+check "...and on the exit code" "3 3" "$(printf '%s %s' "$(pre_rc status --json)" "$(pre_rc mcp-doctor --json)")"
+check "info --json agrees too" "True|no database" \
+    "$(pre info --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%s|%s" % (d["installed"], d["status"]))' 2>/dev/null)"
+check "plain info exits like info --json, not 0" "3 3" "$(printf '%s %s' "$(pre_rc info)" "$(pre_rc info --json)")"
+check "plain info on a bare machine exits 4, not 1" "4" \
+    "$(EXAKIT_HOME="$WORK/bare2" bash "$CLI" info >/dev/null 2>&1; echo $?)"
+# THE EXIT-CODE ALLOW-LIST. AGENTS.md says "the code IS the answer", so a state
+# query may only ever answer with a code the document defines.
+_codes=""
+for _q in status info version mcp-status mcp-doctor; do
+    for _h in "$PRE" "$WORK/bare3" "$EXAKIT_HOME"; do
+        _c="$(EXAKIT_HOME="$_h" bash "$CLI" $_q --json >/dev/null 2>&1 </dev/null; echo $?)"
+        case "$_c" in 0|2|3|4) ;; *) _codes="${_codes:+$_codes }$_q@$(basename "$_h")=$_c" ;; esac
+        _c="$(EXAKIT_HOME="$_h" bash "$CLI" $_q >/dev/null 2>&1 </dev/null; echo $?)"
+        case "$_c" in 0|2|3|4) ;; *) _codes="${_codes:+$_codes }$_q@$(basename "$_h")=$_c" ;; esac
+    done
+done
+check "every state query x state answers 0/2/3/4 and nothing else" "" "$_codes"
+
+echo "R5-6. a declined destructive repair is not a success:"
+_rr="$(sed -n '/^cmd_repair_runtime()/,/^}/p' "$CLI")"
+# The window from the confirmation to the end of the declined branch: the code
+# it leaves with has to be 5, not the 0 a declined repair used to answer.
+_rr_decline="$(printf '%s\n' "$_rr" | grep -A 30 'Delete the database and rebuild it now?')"
+has "the declined path returns a distinct non-zero code" "return 5" "$_rr_decline"
+lacks "...and no longer returns 0" "return 0" "$_rr_decline"
+has "repair-runtime takes --json" '"Unknown option '"'"'$_rr_arg'"'"' for repair-runtime (supported: --yes, --json)."' "$_rr"
+has "...and the declined answer is machine-readable" '"status": "declined"' "$_rr"
+has "the twin exits 5 too" "exit 5" "$(sed -n '/^function Invoke-CmdRepairRuntime {/,/^}/p' "$ROOT/setup/exakit.ps1")"
+has "...and answers --json" 'status = "declined"' "$_ps"
+check "the help document names exit 5" "declined" \
+    "$(python3 -c 'import json; d=json.load(open("'"$ROOT"'/setup/help/exakit.json")); print([c for c in d["commands"] if c["command"]=="repair-runtime"][0]["exit_codes"]["5"].split(" -")[0])')"
+has "AGENTS.md documents exit 5" "exits \`5\` when the destructive confirmation was" "$(cat "$ROOT/AGENTS.md")"
+
+echo "R5-7. a statement whose first line is an SQL comment is SQL, not an option:"
+_cmt="$(bash "$CLI" sql --json '-- monthly revenue
+DROP TABLE T' 2>/dev/null)"
+check "the comment line is stripped and the GATE sees the statement" "not-an-option" \
+    "$(printf '%s' "$_cmt" | python3 -c 'import json,sys
+e = json.load(sys.stdin)["error"]
+print("not-an-option" if "Unknown option" not in e else e)' 2>/dev/null)"
+has "...and it is refused as a write, which is what it is" "not a read statement" "$_cmt"
+check "a bare -- ends the options, so the statement after it is read" "not-an-option" \
+    "$(bash "$CLI" sql --json -- 'DROP TABLE T' 2>/dev/null | python3 -c 'import json,sys
+e = json.load(sys.stdin)["error"]
+print("not-an-option" if "Unknown option" not in e else e)' 2>/dev/null)"
+check "a REAL unknown option is still refused, exit 2" "2" "$(bash "$CLI" sql --nosuch 'SELECT 1' >/dev/null 2>&1; echo $?)"
+has "...and the refusal now points at the comment case" "its first line is a '--' comment" \
+    "$(bash "$CLI" sql --nosuch 'SELECT 1' 2>&1)"
+has "the twin treats a leading comment as SQL" 'if ($a -like "-- *" -or $a -match' "$_ps"
+
+echo "R5-8. every dispatched command is in a help document, hidden or not:"
+_dispatch="$(sed -n '/^case "${1:-help}" in$/,/^esac$/p' "$CLI" | grep -o '^    [a-z0-9|-]*)' | tr -d ' )' | tr '|' '\n' | grep -v '^$' | grep -v '^-' | sort -u)"
+_documented="$(python3 -c 'import json; d=json.load(open("'"$ROOT"'/setup/help/exakit.json")); print("\n".join(sorted(c["command"] for c in d["commands"])))')"
+check "no dispatched command is missing from setup/help/exakit.json" "" \
+    "$(comm -23 <(printf '%s\n' "$_dispatch") <(printf '%s\n' "$_documented") | grep -v '^\*$' | tr '\n' ' ' | sed 's/ $//')"
+check "preflight has a page now" "yes" \
+    "$(bash "$CLI" preflight --help >/dev/null 2>&1 && echo yes || echo no)"
+has "...and it is on the help screen" "preflight" "$(bash "$CLI" help 2>&1)"
+check "the kit2 commands are hidden, not absent" "True True" \
+    "$(python3 -c 'import json; d=json.load(open("'"$ROOT"'/setup/help/exakit.json")); print(" ".join(str([c for c in d["commands"] if c["command"]==n][0].get("hidden")) for n in ("upgrade-kit2","rollback-kit2")))')"
+lacks "...so catalog --json does not advertise them" "upgrade-kit2" "$(bash "$CLI" catalog --json 2>/dev/null)"
+
+echo "R5-9. AGENTS.md matches what the code actually does:"
+_agents="$(cat "$ROOT/AGENTS.md")"
+has "the contract block puts the CLI on PATH before it uses a bare exakit" \
+    'export PATH="$HOME/.local/bin:$PATH"' "$_agents"
+lacks "...and no longer polls by absolute path two lines above a bare call" \
+    '~/.local/bin/exakit status --json' "$_agents"
+has "the block backgrounds the install with nohup, as the Install section demands" \
+    "nohup sh -c 'curl -fsSL" "$_agents"
+has "refusals are documented on stderr, where reject() and die() write them" \
+    "goes to **stderr**" "$_agents"
+has "...with sql's stdout remedy kept as the exception" \
+    '**`exakit sql` names its remedy first, on stdout**' "$_agents"
+has "the one-shape claim is scoped to the state queries" \
+    "The five state queries are" "$_agents"
+has "...and says one shape covers exactly those" "one shape covers all of them" "$_agents"
+has "...and the content commands' own shapes are named" \
+    '`logs --json` is `{"count", "targets"}`' "$_agents"
+has "the status vocabulary is written down" "\`no database\` (the kit is installed" "$_agents"
+for _v in EXAKIT_NO_FANCY EXAKIT_HELP_PLAIN EXAKIT_CONFIRM_RUNTIME_REPAIR \
+          EXAKIT_MCP_READONLY_SCHEMAS EXAKIT_ALLOW_UNVERIFIED_EXAPUMP \
+          EXAKIT_ALLOW_UNVERIFIED_JSON_TABLES EXAKIT_ALLOW_UNVERIFIED_EXASOL_VSCODE; do
+    has "AGENTS.md documents $_v" "$_v" "$_agents"
+done
+has "...and warns off the checksum bypass in an unattended run" \
+    "Never set one in an unattended run" "$_agents"
+lacks "the usage text no longer calls info --json the manifest verbatim" \
+    "install record (manifest.json) verbatim" "$(cat "$CLI")"
+lacks "...nor does the twin" "install record (manifest.json) verbatim" "$_ps"
+lacks "...nor the help document" "verbatim" "$(cat "$ROOT/setup/help/exakit.json")"
+
+echo "R5-10. the marketplace surfaces mirror across the twins:"
+has "the twin's version --json uses the closed status vocabulary" \
+    '$rowStatus = "available"; $rowRemedy = "exakit marketplace' "$_ps"
+lacks "...and no longer puts a command in the status field" \
+    'status          = $r.R' "$_ps"
+has "the twin's status --json carries the service urls" 'urls            = $serviceUrls' "$_ps"
+has "...resolved through a registry hook, not a hardcoded id" 'function Get-ExakitServiceUrl' "$_ps"
+has "dash-server registers its UrlFn" 'UrlFn       = "Get-DashServerUrl"' "$(cat "$ROOT/setup/lib/exakit-common.ps1")"
+has "...and defines it" "function Get-DashServerUrl" "$(cat "$ROOT/setup/lib/dash-server.ps1")"
+has "the shell side still carries urls" '"urls": umap' "$(cat "$CLI")"
+_dashskill="$(cat "$ROOT/skills/dash-server/SKILL.md")"
+has "the dash-server skill points at the JSON that carries the URL" \
+    'exakit status --json    # .urls["dash-server"]' "$_dashskill"
+lacks "...and no longer at a command that does not print the port" \
+    "exakit info        # dash-server's recorded port" "$_dashskill"
+
 printf '\npassed: %d, failed: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

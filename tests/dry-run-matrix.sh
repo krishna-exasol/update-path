@@ -985,10 +985,10 @@ printf '{\n  "kit": {\n    "version": "0.2.0"\n  }\n}\n' > "$_ij/have/manifest.j
 _ij_out="$(EXAKIT_HOME="$_ij/have" bash "$ROOT/setup/exakit" info --json 2>"$_ij/err")"
 _ij_alias="$(EXAKIT_HOME="$_ij/have" bash "$ROOT/setup/exakit" info -j 2>/dev/null)"
 _ij_none="$(EXAKIT_HOME="$_ij/none" bash "$ROOT/setup/exakit" info --json 2>/dev/null)"; _ij_rc=$?
-# The record verbatim PLUS the three keys every state query carries
-# (installed/status/remedy) and the `skills` verdict block: strip those and
-# what is left must be the manifest.
-if python3 -c 'import json,sys; d=json.loads(sys.argv[2]); r=json.load(open(sys.argv[1])); [d.pop(k, None) for k in ("installed","status","remedy","skills")]; sys.exit(0 if d == r else 1)' "$_ij/have/manifest.json" "$_ij_out" && \
+# The record PLUS the keys every state query carries (installed/status/remedy,
+# and remedy_hint when the remedy needs explaining) and the `skills` verdict
+# block: strip those and what is left must be the manifest.
+if python3 -c 'import json,sys; d=json.loads(sys.argv[2]); r=json.load(open(sys.argv[1])); [d.pop(k, None) for k in ("installed","status","remedy","remedy_hint","skills")]; sys.exit(0 if d == r else 1)' "$_ij/have/manifest.json" "$_ij_out" && \
    [ "$_ij_alias" = "$_ij_out" ] && \
    [ ! -s "$_ij/err" ] && \
    printf '%s' "$_ij_none" | python3 -m json.tool >/dev/null 2>&1 && \
@@ -1051,15 +1051,25 @@ else
     check "rerun(refreshes_stale_command)" "yes" "no"
 fi
 # The Kit 2 surface: both wrappers, the update target, and the Windows answer.
-# The catalog rows are deliberately NOT part of it - Kit 2 is off the help
-# screen, so setup/help/exakit.json carries no kit2 entry to grep for. Whether
-# Kit 2 is ADVERTISED is a separate switch (the kit2 block in versions.json)
-# and is asserted in tests/versions-manifest.sh.
+# Kit 2 stays off the help screen and off `catalog --json` - but by being marked
+# "hidden": true in setup/help/exakit.json, not by being absent from it. A
+# command in the dispatcher and in NO document at all is one an agent can only
+# find by reading the source (the audit's AGK-10); hidden gives it a page that
+# `exakit upgrade-kit2 --help` answers with while keeping it out of discovery.
+# Whether Kit 2 is ADVERTISED is a separate switch (the kit2 block in
+# versions.json) and is asserted in tests/versions-manifest.sh.
 if grep -q 'upgrade-kit2)  cmd_kit2_script' "$ROOT/setup/exakit" && \
    grep -q 'rollback-kit2) cmd_kit2_script' "$ROOT/setup/exakit" && \
    grep -q 'exakit_update_kit2' "$ROOT/setup/lib/common.sh" && \
    grep -q 'manifest_set kit2.version' "$ROOT/upgrade/upgrade-kit2.sh" && \
-   ! grep -q 'upgrade-kit2' "$ROOT/setup/help/exakit.json" && \
+   python3 -c '
+import json, sys
+doc = json.load(open(sys.argv[1]))
+for name in ("upgrade-kit2", "rollback-kit2"):
+    entry = [c for c in doc["commands"] if c["command"] == name]
+    assert entry and entry[0].get("hidden") is True, name
+' "$ROOT/setup/help/exakit.json" && \
+   ! bash "$ROOT/setup/exakit" catalog --json 2>/dev/null | grep -q 'upgrade-kit2' && \
    grep -q 'Write-ExakitKit2NotAvailable' "$ROOT/setup/exakit.ps1"; then
     check "kit2(cli_surface)" "yes" "yes"
 else

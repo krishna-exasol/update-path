@@ -53,8 +53,10 @@ has "the human screen names the datasets too" "tpch" \
     "$(EXAKIT_HOME="$WORK/stopped" bash "$ROOT/setup/exakit" status 2>/dev/null)"
 # The fixture's container does not exist, so there is no runtime to start:
 # "exakit start" was the pre-runtime remedy bug this suite used to PIN as
-# correct (the audit's AGK-18). The fix an agent can act on is the installer.
-has "prose names the fix" "re-run the installer" "$(EXAKIT_HOME="$WORK/stopped" bash "$ROOT/setup/exakit" status 2>/dev/null | tail -1)"
+# correct (the audit's AGK-18). The fix an agent can act on is the installer -
+# and the row names the RUNNABLE command, byte for byte the same string
+# `status --json` hoists into `remedy`, not the prose "re-run the installer".
+has "prose names the fix, as a runnable command" "curl -fsSL" "$(EXAKIT_HOME="$WORK/stopped" bash "$ROOT/setup/exakit" status 2>/dev/null | tail -1)"
 # 2, not 1: bad input has its own code across the CLI now (the same one an
 # unknown subcommand uses), so an agent can tell "I typed it wrong" from "the
 # command ran and failed". It also records no failure note — see the reject

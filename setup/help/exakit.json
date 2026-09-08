@@ -45,6 +45,7 @@
     {
       "title": "Repair and removal",
       "commands": [
+        "preflight",
         "repair-runtime",
         "uninstall"
       ]
@@ -61,6 +62,15 @@
     }
   ],
   "commands": [
+    {
+      "command": "preflight",
+      "options": "",
+      "summary": "Check this machine's requirements; install nothing.",
+      "description": "Re-runs the machine-requirement checks the installer runs first - RAM, free disk, the container engine or the macOS runtime, and the ports the database needs - against an installed kit, and changes nothing. The same checks run before an install with EXAKIT_PREFLIGHT=1.",
+      "examples": [
+        "exakit preflight"
+      ]
+    },
     {
       "command": "status",
       "options": "[--json | -j]",
@@ -90,7 +100,7 @@
       "command": "info",
       "options": "[--json | -j]",
       "summary": "Your connection details.",
-      "description": "The connection panel: DSN, admin and MCP users, where each password file lives, TLS mode and paths. --json prints the install record (manifest.json) verbatim on stdout with nothing else on it.",
+      "description": "The connection panel: DSN, admin and MCP users, where each password file lives, TLS mode and paths. --json prints the install record (manifest.json) plus the state keys installed / status / remedy / skills on stdout, with nothing else on it.",
       "exit_codes": {
         "0": "running",
         "3": "database stopped",
@@ -283,16 +293,25 @@
     },
     {
       "command": "repair-runtime",
-      "options": "[--yes]",
+      "options": "[--yes] [--json | -j]",
       "summary": "Rebuild a database that cannot start.",
-      "description": "For a deployment the launcher reports interrupted where every start fails the same way.",
+      "description": "For a deployment the launcher reports interrupted where every start fails the same way. Without --yes it asks, and without a terminal the answer is no: declining changes nothing and exits 5, so a scripted caller can tell \"not confirmed\" from \"repaired\". --json answers with one object ({\"ok\", \"status\", \"changed\", \"remedy\"}) instead of the panel.",
       "warning": "DESTRUCTIVE: the deployment is replaced and its data is not recoverable. Bundled datasets are reloaded afterwards.",
       "environment": [
         "EXAKIT_CONFIRM_RUNTIME_REPAIR=1 pre-answers the confirmation"
       ],
       "examples": [
-        "exakit repair-runtime"
-      ]
+        "exakit repair-runtime",
+        "exakit repair-runtime --yes",
+        "exakit repair-runtime --json"
+      ],
+      "exit_codes": {
+        "0": "the runtime was rebuilt",
+        "2": "bad input",
+        "3": "the rebuild did not finish",
+        "4": "not installed",
+        "5": "declined - not confirmed, nothing was changed"
+      }
     },
     {
       "command": "uninstall",
@@ -337,6 +356,26 @@
         "exakit whats-new",
         "exakit whats-new 0.2.0"
       ]
+    },
+    {
+      "command": "upgrade-kit2",
+      "options": "",
+      "summary": "Add the Kit 2 trust assets to this install (internal).",
+      "description": "Runs the kit's own upgrade/upgrade-kit2.sh against this install: the Trusted AI Workflow add-on is layered on top and nothing is reinstalled. An upgrade path the kit runs for itself, not a command to reach for by hand.",
+      "examples": [
+        "exakit upgrade-kit2"
+      ],
+      "hidden": true
+    },
+    {
+      "command": "rollback-kit2",
+      "options": "",
+      "summary": "Remove exactly what upgrade-kit2 added (internal).",
+      "description": "Runs the kit's own upgrade/rollback-kit2.sh: everything upgrade-kit2 added is removed, and the database and every Kit 1 component stay untouched.",
+      "examples": [
+        "exakit rollback-kit2"
+      ],
+      "hidden": true
     }
   ],
   "environment": [
