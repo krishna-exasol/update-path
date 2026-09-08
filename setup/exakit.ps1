@@ -2910,9 +2910,13 @@ function Invoke-CmdSql {
             }
             if ($detail -eq "query failed" -and $errLines.Count -gt 0) { $detail = $errLines[0].Trim() }
         }
-        $remedyText = $null
-        if ($remedyLines.Count -gt 0) { $remedyText = ($remedyLines -join " ") }
-        [ordered]@{ ok = $false; error = $detail; remedy = $remedyText } | ConvertTo-Json -Depth 3 -Compress | Write-Output
+        # The COMMAND and the SENTENCE travel separately: remedy is runnable
+        # verbatim or null, and the prose the human path prints is remedy_hint.
+        $remedyHint = $null
+        if ($remedyLines.Count -gt 0) { $remedyHint = ($remedyLines -join " ") }
+        $remedyCmd = Get-ExakitDbErrorRemedyCommand -Text $errText
+        if (-not $remedyCmd) { $remedyCmd = $null }
+        [ordered]@{ ok = $false; error = $detail; remedy = $remedyCmd; remedy_hint = $remedyHint } | ConvertTo-Json -Depth 3 -Compress | Write-Output
         exit 1
     }
     $result = Invoke-Exapump @("sql", "-p", $script:ExapumpProfile, $Statement)

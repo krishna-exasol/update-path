@@ -1716,10 +1716,15 @@ cmd_sql() {
         _sql_remf="$(mktemp "${TMPDIR:-/tmp}/exakit-sql-remedy.XXXXXX")"
         "$(exapump_cli)" sql -p "$EXAKIT_EXAPUMP_PROFILE" -f json "$_sql_text" >"$_sql_rowsf" 2>"$_sql_err"
         _sql_rc=$?
+        _sql_cmd=""
         if [ "$_sql_rc" -ne 0 ]; then
+            # The COMMAND and the SENTENCE travel separately: the contract says
+            # remedy is runnable verbatim or null, so the prose the human path
+            # prints becomes remedy_hint here, never the remedy itself.
             exakit_db_error_remedy "$(cat "$_sql_err" 2>/dev/null)" "$_sql_text" > "$_sql_remf"
+            _sql_cmd="$(exakit_db_error_remedy_cmd "$(cat "$_sql_err" 2>/dev/null)")"
         fi
-        run_python - "$_sql_rc" "$_sql_rowsf" "$_sql_err" "$_sql_remf" <<'EXAKIT_SQL_JSON_PY'
+        run_python - "$_sql_rc" "$_sql_rowsf" "$_sql_err" "$_sql_remf" "$_sql_cmd" <<'EXAKIT_SQL_JSON_PY'
 import json, sys
 rc = int(sys.argv[1])
 def read(path):
@@ -1729,6 +1734,7 @@ def read(path):
     except OSError:
         return ""
 rows, err, remedy = read(sys.argv[2]), read(sys.argv[3]), read(sys.argv[4])
+remedy_cmd = sys.argv[5] if len(sys.argv) > 5 else ""
 if rc == 0:
     try:
         parsed = json.loads(rows) if rows.strip() else []
@@ -1749,7 +1755,9 @@ else:
         detail = next((l for l in lines if ("rror" in l or "failed" in l)
                        and not l.startswith("Hint:") and not l.startswith("Error in statement")),
                       lines[0] if lines else "query failed")
-    print(json.dumps({"ok": False, "error": detail, "remedy": remedy.strip() or None}))
+    print(json.dumps({"ok": False, "error": detail,
+                      "remedy": remedy_cmd.strip() or None,
+                      "remedy_hint": remedy.strip() or None}))
 EXAKIT_SQL_JSON_PY
         _sql_py_rc=$?
         rm -f "$_sql_err" "$_sql_rowsf" "$_sql_remf"

@@ -1048,6 +1048,30 @@ exakit_db_error_remedy() {
     return 0
 }
 
+# exakit_db_error_remedy_cmd <engine text> — the RUNNABLE half of the remedy:
+# one command verbatim, or nothing. `sql --json` promises the same contract as
+# every other machine answer ("when remedy is not null, run it" — AGENTS.md),
+# so the sentence exakit_db_error_remedy composes for humans goes to
+# remedy_hint there, and THIS is what sits at the remedy key. Faults whose fix
+# is a rewrite, a grant, or a look at the schema have no verbatim command —
+# they answer null here, with the hint carrying the guidance.
+# ⇄ twin: Get-ExakitDbErrorRemedyCommand.
+exakit_db_error_remedy_cmd() {
+    case "$1" in
+        *"onnection refused"*|*"Errno 61"*|*"Errno 111"*|*"could not connect"*|*"Could not connect"*|*"Failed to connect to"*|*"failed to connect to"*|*"actively refused"*|*"os error 10061"*)
+            printf 'exakit start\n'
+            return 0
+            ;;
+    esac
+    case "$1" in
+        *"tls handshake"*|*"TLS handshake"*|*"TLS error"*)
+            printf 'exakit status\n'
+            return 0
+            ;;
+    esac
+    return 0
+}
+
 # exakit_explain_db_error <engine text> — the same remedies as warnings, for the
 # lifecycle paths that print their own output first.
 exakit_explain_db_error() {
@@ -7376,50 +7400,16 @@ _exakit_generate_sql_password_token() {
     printf 'A%s\n' "$(LC_ALL=C tr -dc 'A-Z0-9' < /dev/urandom | head -c 23)"
 }
 
-# _exakit_add_bin_to_shell_rc <bin-directory>
-# Adds the bin directory to shell startup files for persistent PATH updates
-# across future shell sessions. Works for bash, zsh, and sh.
+# _exakit_add_bin_to_shell_rc <bin-directory> — one PATH-persistence policy,
+# not two. This used to carry its own dotfile preference ("Prefer ~/.bashrc"),
+# which on macOS wrote a file neither zsh (the default shell) nor login bash
+# ever reads — printing a green tick for an edit no new terminal would pick up
+# — and it ignored EXAKIT_NO_PROFILE_EDIT. ensure_path_hint already makes the
+# Darwin-aware choice (zsh -> .zshrc, macOS bash -> .bash_profile), marks its
+# edit, and honours the opt-out; the second implementation existed only to
+# drift from the first.
 _exakit_add_bin_to_shell_rc() {
-    _bin_dir="$1"
-    # MARKED, like ensure_path_hint's edit. An anonymous `export PATH=...` line
-    # in a dotfile is untraceable months later, and uninstall deliberately
-    # leaves the entry in place - so the marker is the only thing that tells the
-    # reader which kit put it there and what to delete.
-    _bin_marker="# Added by the Exasol Personal Local Starter Kit (exakit CLIs)"
-    _export_line="export PATH=\"$_bin_dir:\$PATH\""
-    
-    # Prefer ~/.bashrc (most common for interactive bash shells)
-    if [ -f "$HOME/.bashrc" ]; then
-        if ! grep -Fq "$_bin_dir" "$HOME/.bashrc" 2>/dev/null; then
-            printf '\n%s\n%s\n' "$_bin_marker" "$_export_line" >> "$HOME/.bashrc"
-            ok "Added $_bin_dir to PATH in $HOME/.bashrc (tagged \"Added by the Exasol Personal Local Starter Kit\" - delete that block to undo)"
-        fi
-        return 0
-    fi
-    
-    # Fall back to ~/.profile (POSIX shell / login shells)
-    if [ -f "$HOME/.profile" ]; then
-        if ! grep -Fq "$_bin_dir" "$HOME/.profile" 2>/dev/null; then
-            printf '\n%s\n%s\n' "$_bin_marker" "$_export_line" >> "$HOME/.profile"
-            ok "Added $_bin_dir to PATH in $HOME/.profile (tagged \"Added by the Exasol Personal Local Starter Kit\" - delete that block to undo)"
-        fi
-        return 0
-    fi
-    
-    # For macOS or when ~/.bashrc doesn't exist, try ~/.zshrc
-    if [ -f "$HOME/.zshrc" ]; then
-        if ! grep -Fq "$_bin_dir" "$HOME/.zshrc" 2>/dev/null; then
-            printf '\n%s\n%s\n' "$_bin_marker" "$_export_line" >> "$HOME/.zshrc"
-            ok "Added $_bin_dir to PATH in $HOME/.zshrc (tagged \"Added by the Exasol Personal Local Starter Kit\" - delete that block to undo)"
-        fi
-        return 0
-    fi
-    
-    # If no startup file exists yet, create ~/.profile
-    if ! grep -Fq "$_bin_dir" "$HOME/.profile" 2>/dev/null; then
-        printf '%s\n%s\n' "$_bin_marker" "$_export_line" >> "$HOME/.profile"
-        ok "Added $_bin_dir to PATH in new $HOME/.profile (tagged \"Added by the Exasol Personal Local Starter Kit\" - delete that block to undo)"
-    fi
+    ensure_path_hint "$1"
 }
 
 _exakit_redact_mcp_secret_output() {
@@ -10108,6 +10098,11 @@ _exakit_shared_engine_db_warning() {
         wsl|windows) ;;
         *) return 1 ;;
     esac
+    # Rootless Podman inside the distro is NOT the shared Docker Desktop
+    # engine: its containers are invisible to Windows, so warning a
+    # Podman-on-WSL user that removal deletes "the Windows database" would be
+    # false — and windows-wsl.md tells them so in as many words.
+    _exakit_nano_rootless_podman 2>/dev/null && return 1
     _sedw_names="$(_exakit_nano_target_names)"
     warn "Windows and WSL share one Docker engine. If this machine also has a Windows or WSL install of the kit, removing the container '${_sedw_names%|*}' and the volume '${_sedw_names#*|}' deletes that database too, and it cannot be recovered."
     return 0
@@ -10130,7 +10125,12 @@ _exakit_uninstall_component() {
             # other side's kit has no way to warn from here.
             _uc_shared=""
             case "$(detect_os)" in
-                wsl|windows) _uc_shared=" (Windows and WSL share one Docker engine — if the other side installed this database, this removes it for both)" ;;
+                # Same gate as _exakit_shared_engine_db_warning: rootless
+                # Podman is this distro's own engine, shared with nothing.
+                wsl|windows)
+                    _exakit_nano_rootless_podman 2>/dev/null || \
+                        _uc_shared=" (Windows and WSL share one Docker engine — if the other side installed this database, this removes it for both)"
+                    ;;
             esac
             if [ "$_uc_dry" = "1" ]; then
                 info "  will remove: the local Exasol $_uc_type deployment and ALL its data$_uc_shared"
