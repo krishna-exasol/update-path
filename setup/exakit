@@ -345,6 +345,12 @@ if not running:
     elif db.startswith("not installed"):
         remedies["database"] = install_cmd
         remedy_hints["database"] = "no database is deployed; the installer resumes at the unfinished step"
+    elif db.startswith("not deployed"):
+        # The launcher exists, the deployment does not. `exakit start` refuses
+        # here for the same reason it refuses on `interrupted`, so an agent
+        # handed it loops. repair-runtime is the command that deploys one.
+        remedies["database"] = "exakit repair-runtime"
+        remedy_hints["database"] = "the launcher is installed but no database is deployed; this deploys one"
     else:
         remedies["database"] = "exakit start"
 if db.startswith("conflict"):
@@ -662,6 +668,11 @@ EXAKIT_CS_SOFT
             # No runtime at all: `exakit start` has nothing to start, and
             # prescribing it loops the reader. Only the installer creates one.
             'not installed'*) _cs_row 'Deploy it:' 're-run the installer (it resumes at the unfinished step)' ;;
+            # The launcher is here but there is no deployment for `exakit
+            # start` to start, so it refuses exactly as reliably as it does
+            # for `interrupted`. The command that CREATES one is the repair
+            # path: it re-runs the platform setup from the deployment step.
+            'not deployed'*) _cs_row 'Deploy it:' 'exakit repair-runtime   (the launcher is installed but no database is deployed; this deploys one)' ;;
             *)            _cs_row 'Start it:' 'exakit start' ;;
         esac
         exit 3

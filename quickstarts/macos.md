@@ -4,7 +4,8 @@ Gets you from a bare Mac to a local Exasol database with an AI assistant connect
 
 ## What you need
 
-- macOS on Apple Silicon or Intel
+- macOS on Apple Silicon or Intel (one optional add-on, JSON Tables, is Apple
+  Silicon only — everything else runs on both)
 - 8 GB+ RAM, ~20 GB free disk
 
 The install runs unattended, and the database is usually up in **under 2 minutes**. The steps after it — sample data, the AI bridge, the Python driver — add to that.
@@ -81,11 +82,13 @@ Full detail: [Staying up to date](../README.md#staying-up-to-date).
 
 | Issue | Fix |
 |---|---|
-| "This machine does not meet the requirements" | Exasol Personal needs 8 GB RAM. The installer stops rather than half-installing |
-| `python3` triggers a developer-tools popup | Accept it, then re-run |
-| `~/.local/bin` not on PATH warning | Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` |
+| "This machine is not compatible: Exasol Personal needs at least 8 GB RAM" | Exasol Personal needs 8 GB RAM and 20 GB free disk. The installer stops rather than half-installing. To try anyway on a marginal machine: `EXAKIT_FORCE=1` |
+| `python3` triggers a developer-tools popup | Dismiss it. `/usr/bin/python3` is only a stub until Xcode's command line tools are installed; the installer brings its own Python and carries on. Nothing to re-run |
+| `~/.local/bin` not on PATH warning | Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` — or to `~/.bash_profile` if you switched your login shell to bash, because macOS terminals never read `~/.bashrc` |
 | Company-managed Mac blocks virtualization | Use a machine you control |
-| Where did everything go? | Commands: `~/.local/bin` · state and passwords: `~/.exasol-starter-kit` |
+| `exakit start` keeps failing after a crash or hard power-off | `exakit status` says `interrupted`. The launcher cannot restart that deployment; rebuild it with `exakit repair-runtime`. **This deletes the database content** — the bundled sample data is reloaded, anything you loaded yourself is not |
+| On an Intel Mac, `exakit data-load` will not take a `.json` file | The JSON Tables add-on is published for Apple silicon only. Everything else in the kit runs on both; convert the file to CSV or Parquet, or load it from an Apple silicon Mac |
+| Where did everything go? | Commands: `~/.local/bin` · kit state and credentials: `~/.exasol-starter-kit` · the database itself (deployment, data, `secrets.json`): `~/.exasol/personal/deployments/default` |
 
 Stop and start any time with `exakit stop` and `exakit start`. Your data is kept.
 

@@ -207,7 +207,14 @@ personal_refuse_launcher_downgrade() {
 personal_install_launcher() {
     if [ "${EXAKIT_FORCE_COMPONENT_INSTALL:-0}" != "1" ] && command -v exasol >/dev/null 2>&1; then
         _existing="$(command -v exasol)"
-        if "$_existing" install --help 2>/dev/null | grep -w "local" >/dev/null; then
+        # BOUNDED, and anchored to a subcommand line. Bounded because a wedged
+        # launcher answers `install --help` no faster than it answers anything
+        # else and this is the first thing the installer runs; anchored because
+        # `grep -w local` matched the word ANYWHERE in free-form help text --
+        # a description like "Stop a running local deployment" was enough to
+        # accept a launcher that has no `local` preset at all.
+        if exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$_existing" install --help 2>/dev/null \
+                | personal_help_names_token "local"; then
             ok "Exasol launcher already installed: $_existing"
             return 0
         fi
@@ -263,6 +270,17 @@ personal_install_launcher() {
         || die "Could not install the Exasol launcher to $EXAKIT_PERSONAL_BIN (is it writable? is the disk full?)."
     push_rollback "rm -f \"$EXAKIT_PERSONAL_BIN\""
     rm -rf "$_tmp"
+
+    # Prove the downloaded binary can actually be executed before anything
+    # treats its silence as an answer. A checksum says the bytes arrived
+    # intact; it says nothing about whether this kernel will run them.
+    exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$EXAKIT_PERSONAL_BIN" --version >/dev/null 2>&1
+    _pil_rc=$?
+    if exakit_unsigned_binary_hint "$EXAKIT_PERSONAL_BIN" "$_pil_rc"; then
+        EXAKIT_QUIET_DETAIL="$_pil_prev_quiet"
+        EXAKIT_ACTIVE_LABEL="$_pil_prev_label"
+        die "The Exasol launcher was downloaded and verified but cannot be executed on this machine."
+    fi
 
     EXAKIT_QUIET_DETAIL="$_pil_prev_quiet"
     EXAKIT_ACTIVE_LABEL="$_pil_prev_label"
@@ -605,7 +623,8 @@ personal_deploy_local() {
         info "An Exasol database is already running on port $EXAKIT_PERSONAL_PORT."
         if confirm_env EXAKIT_REUSE_DB "Use it instead of deploying a new one?" y; then
             ok "Reusing the existing Exasol deployment"
-            personal_record_manifest
+            # personal_deployment_running just answered a real SELECT.
+            personal_record_manifest "healthy"
             return 0
         fi
         die "Declined to reuse the running database. Stop it first ('exakit stop', or 'exasol stop'), then re-run to deploy a fresh one — port $EXAKIT_PERSONAL_PORT stays in use while it is running."
@@ -631,7 +650,7 @@ personal_deploy_local() {
             if personal_launcher_supports start && run_logged "$(personal_cli)" start; then
                 ok "Reusing the existing Exasol deployment (started)"
                 personal_wait_ready
-                personal_record_manifest
+                personal_record_manifest "healthy"
                 return 0
             fi
             warn "The existing deployment could not be started."
@@ -724,17 +743,27 @@ personal_deploy_local() {
     _personal_deploy_print_notice "$_deploy_notice"
     rm -rf "$_deploy_tmp"
 
-    personal_record_manifest
+    personal_record_manifest "healthy"
 }
 
 personal_wait_ready() {
     info "Checking deployment health"
-    # This probe is silent for five seconds a try, up to thirty tries. Animate
-    # it: the step that just stopped showing the launcher's chatter must not
-    # then end on a still screen.
+    # A WALL-CLOCK ceiling, not a try count. Counting tries made the budget
+    # thirty sleeps of five seconds PLUS thirty launcher probes of up to
+    # EXAKIT_PERSONAL_PROBE_TIMEOUT each - up to 450 s of waiting behind a
+    # message that promised 150. The deadline below is the number the message
+    # quotes, and the try cap is derived from it as the fallback for a machine
+    # whose `date` cannot answer (elapsed would stay 0 and the loop would never
+    # end); it is never the tighter of the two.
+    # Animate it: the step that just stopped showing the launcher's chatter
+    # must not then end on a still screen.
     ui_spin_begin "Waiting for the database to answer"
+    _pwr_budget="${EXAKIT_PERSONAL_READY_TIMEOUT:-150}"
+    _pwr_t0="$(date +%s 2>/dev/null || echo 0)"
+    _pwr_elapsed=0
+    _pwr_maxtries=$(( _pwr_budget / 5 + 1 ))
     _tries=0
-    while [ "$_tries" -lt 30 ]; do
+    while [ "$_pwr_elapsed" -lt "$_pwr_budget" ] && [ "$_tries" -lt "$_pwr_maxtries" ]; do
         if port_in_use "$EXAKIT_PERSONAL_PORT" && \
            exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$(personal_cli)" info >/dev/null 2>&1; then
             ui_spin_end
@@ -743,14 +772,30 @@ personal_wait_ready() {
         fi
         sleep 5
         _tries=$((_tries + 1))
+        _pwr_elapsed=$(( $(date +%s 2>/dev/null || echo 0) - _pwr_t0 ))
+        [ "$_pwr_elapsed" -ge 0 ] || _pwr_elapsed=0
     done
     ui_spin_end
+    # The number the user actually waited, not the number the loop intended.
+    _pwr_spent="$_pwr_elapsed"
+    [ "$_pwr_spent" -gt 0 ] || _pwr_spent=$(( _tries * 5 ))
     # Not "run the probe that just failed": name the two commands that actually
     # diagnose and recover a deploy that answers nothing.
-    die "The deployment did not answer within $((_tries * 5)) seconds. Read the state with 'exakit status', then 'exakit start' to retry - a deployment stuck in 'interrupted' is repaired with 'exakit repair-runtime' (destructive, it asks first)."
+    die "The deployment did not answer within ${_pwr_spent} seconds (the ceiling is ${_pwr_budget}s; raise it with EXAKIT_PERSONAL_READY_TIMEOUT). Read the state with 'exakit status', then 'exakit start' to retry - a deployment stuck in 'interrupted' is repaired with 'exakit repair-runtime' (destructive, it asks first)."
 }
 
+# personal_record_manifest [status] — write the connection details this kit
+# hands to every client, plus the runtime state.
+#
+# The STATUS IS AN ARGUMENT because it used to be the constant "healthy". Every
+# caller got it, including `exakit update`, which reaches here after swapping
+# the launcher binary with no health probe of any kind in between — so updating
+# a STOPPED database recorded it as healthy, and anything reading the manifest
+# rather than calling personal_status was then simply wrong. Callers that have
+# just watched the database answer pass "healthy"; callers that have not pass
+# nothing and the state is probed.
 personal_record_manifest() {
+    _prm_status="${1:-}"
     manifest_set runtime.type "personal"
     # The version of the deployment ON DISK, whenever its state can say —
     # never the version this kit merely advertises. Reusing or adopting an
@@ -795,16 +840,35 @@ print("%s:%s\t%s" % (c.get("host", "127.0.0.1"), c.get("dbPort", 8563), c.get("u
         warn "Could not read the database password from the deployment secrets — the exapump profile and MCP configs will ask for it or need manual completion."
     fi
     manifest_set runtime.tls "self-signed"
-    manifest_set runtime.status "healthy"
+    # Never assert health without either having just seen it or probing for it.
+    [ -n "$_prm_status" ] || _prm_status="$(personal_status 2>/dev/null || true)"
+    manifest_set runtime.status "${_prm_status:-unknown}"
 }
 
 # --- lifecycle (used by exakit) ---------------------------------------------
+# personal_help_names_token <token> — filter reading help text on stdin; true
+# when <token> appears in a SUBCOMMAND/FLAG position, i.e. first on its own
+# line apart from indentation, rather than anywhere in the prose.
+#
+# `grep -w` was the old test and it matched the word wherever it fell: a row
+# reading "stop   Stop a running local deployment" satisfied `-w local` and
+# `-w start` at once, so the capability probes this module is built around
+# answered yes for commands the launcher does not have.
+#
+# No `grep -q` here: it exits at the first match and closes the pipe, the
+# launcher takes a SIGPIPE (141) writing the rest of its help, and the
+# dispatcher's `set -o pipefail` then fails the whole pipeline — making a
+# supported command look unsupported. Plain grep reads the full help.
+personal_help_names_token() {
+    grep -E "^[[:space:]]*(-[-a-zA-Z0-9]+,[[:space:]]*)?$1([[:space:]]|,|$)" >/dev/null
+}
+
 personal_launcher_supports() {
-    # No `grep -q` here: it exits at the first match and closes the pipe, the
-    # launcher takes a SIGPIPE (141) writing the rest of its help, and the
-    # dispatcher's `set -o pipefail` then fails the whole pipeline — making a
-    # supported command look unsupported. Plain grep reads the full help.
-    "$(personal_cli)" --help 2>&1 | grep -w "$1" >/dev/null
+    # Bounded: a launcher wedged on a deployment it cannot open hangs on
+    # `--help` like everything else, and this is called from `exakit start`,
+    # `exakit stop` and the deploy path.
+    exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$(personal_cli)" --help 2>&1 \
+        | personal_help_names_token "$1"
 }
 
 # personal_deployment_wedged — has the launcher marked this deployment as
@@ -1048,8 +1112,18 @@ personal_update() {
                 manifest_set runtime.launcher "$(personal_cli)"
                 manifest_set runtime.launcher_version "$EXAKIT_PERSONAL_VERSION"
                 manifest_set desired.runtime.personal "$EXAKIT_PERSONAL_VERSION"
+                # THE UPGRADE HAS TO CONVERGE. Leaving runtime.version on the
+                # old number meant the next `exakit update` saw the same major
+                # gap, matched the same backup record, and swapped the launcher
+                # again - forever, with no command anywhere that finishes the
+                # upgrade. The launcher on this machine IS $_latest now, so
+                # that is what the record says; the part that is genuinely
+                # still outstanding is the data migration, and it gets its own
+                # key instead of being encoded as a stale version.
+                manifest_set runtime.version "$_latest"
+                manifest_set runtime.migration_pending "$_latest"
                 warn "Launcher updated. Existing database content was not deleted or migrated."
-                info "Complete the Exasol Personal $_latest data migration before recording runtime.version as $_latest."
+                info "Recorded runtime.version $_latest with runtime.migration_pending $_latest — clear that key once the Exasol Personal $_latest data migration is done."
                 ok "Exasol Personal launcher update applied with backup available at $_last_backup"
                 return 0
                 ;;

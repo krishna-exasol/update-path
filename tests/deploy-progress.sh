@@ -385,17 +385,14 @@ for _dup_file in "$ROOT"/setup/lib/*.ps1 "$ROOT"/setup/*.ps1 "$ROOT"/install.ps1
     check "$(basename "$_dup_file") defines each function once" "" "$(printf '%s' "$_dup_names" | sed 's/ *$//')"
 done
 
-# The shell side has the same hazard, and one real instance predates this guard:
-# ui_rule is defined twice in ui.sh. It is listed here so the count cannot grow
-# without someone noticing, rather than being quietly tolerated.
+# The shell side has the same hazard. ui.sh used to carry one real instance -
+# ui_rule defined twice, the UI_BOX_W-sized first definition dead - and it was
+# tolerated here as a named exception. It is gone, so no file gets an exception.
 for _dup_sh in "$ROOT"/setup/lib/*.sh; do
     [ -f "$_dup_sh" ] || continue
     _dup_shnames="$(grep -oE '^[a-z_][a-z0-9_]*\(\) \{' "$_dup_sh" 2>/dev/null | sort | uniq -d | tr '\n' ' ')"
     _dup_shnames="$(printf '%s' "$_dup_shnames" | sed 's/ *$//')"
-    case "$(basename "$_dup_sh")" in
-        ui.sh) check "ui.sh has exactly the one known duplicate" "ui_rule() {" "$_dup_shnames" ;;
-        *)     check "$(basename "$_dup_sh") defines each function once" "" "$_dup_shnames" ;;
-    esac
+    check "$(basename "$_dup_sh") defines each function once" "" "$_dup_shnames"
 done
 
 printf '\n== a poisoned credential path is repaired, not just reported ==\n'
@@ -581,6 +578,74 @@ has "...and refusal names the admin command" 'loginctl enable-linger $USER' "$CO
 # LNX-03: Linux users stop being routed to a WSL document.
 check "a Linux quickstart exists" "yes" "$([ -f "$ROOT/quickstarts/linux.md" ] && echo yes || echo no)"
 has "and the README points at it" "quickstarts/linux.md" "$(cat "$ROOT/README.md")"
+
+printf '\n== every macOS launcher probe is bounded ==\n'
+
+# MAC-02. exakit_run_bounded exists BECAUSE macOS has no timeout(1), and for a
+# long time it guarded only the container-engine probes - which run on the
+# platforms that do have one. Every `exasol` probe stayed unbounded, so `exakit
+# status`, the command AGENTS.md tells agents to poll, could block forever on
+# exactly the wedged launcher this module ships a reaper for.
+RP_SH="$(cat "$ROOT/setup/lib/runtime-personal.sh")"
+has "the pre-download 'install --help' probe is bounded" \
+    'exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$_existing" install --help' "$RP_SH"
+has "the launcher capability probe is bounded" \
+    'exakit_run_bounded "$EXAKIT_PERSONAL_PROBE_TIMEOUT" "$(personal_cli)" --help' "$RP_SH"
+lacks "no launcher probe runs the CLI straight into a pipe" \
+    '"$(personal_cli)" --help 2>&1 |' "$RP_SH"
+# A probe captured with $( ) stays blocked until every process holding the
+# pipe's write end exits, so the cutoff has to reach the whole group.
+has "the bounded fallback kills the process group first" \
+    'kill -TERM -- "-$_rb_pid"' "$(cat "$ROOT/setup/lib/common.sh")"
+
+# And behaviourally: a launcher that never answers must not hold the probe.
+mkdir -p "$WORK/hang"
+cat > "$WORK/hang/exasol" <<'HANGEOF'
+#!/bin/sh
+exec sleep 60
+HANGEOF
+chmod 755 "$WORK/hang/exasol"
+_pb_bin_was="$EXAKIT_PERSONAL_BIN"
+EXAKIT_PERSONAL_BIN="$WORK/hang/exasol"
+EXAKIT_PERSONAL_PROBE_TIMEOUT=2
+_pb_t0="$(date +%s)"
+personal_launcher_supports start >/dev/null 2>&1
+_pb_spent=$(( $(date +%s) - _pb_t0 ))
+if [ "$_pb_spent" -le 15 ]; then
+    check "a hanging launcher does not hang the capability probe" "bounded" "bounded"
+else
+    check "a hanging launcher does not hang the capability probe" "bounded" "${_pb_spent}s"
+fi
+EXAKIT_PERSONAL_BIN="$_pb_bin_was"
+
+printf '\n== the manifest records the real version and the real state ==\n'
+
+# MAC-07. The major-upgrade `--apply` path deliberately did not record
+# runtime.version, and nothing else recorded it either - so the next `exakit
+# update` saw the same major gap, matched the same backup record, and swapped
+# the launcher again. Forever: no command anywhere finished the upgrade.
+PU_APPLY="$(sed -n '/^personal_update()/,/^}/p' "$ROOT/setup/lib/runtime-personal.sh")"
+has "'update --apply' records the version it just installed" \
+    'manifest_set runtime.version "$_latest"' "$PU_APPLY"
+has "...and the outstanding data migration gets its own key" \
+    'manifest_set runtime.migration_pending' "$PU_APPLY"
+
+# MAC-06. personal_record_manifest ended every call with runtime.status
+# "healthy" - including from `exakit update`, which reaches it after a launcher
+# swap with no health probe of any kind in between. Updating a STOPPED database
+# recorded it as healthy. Stubs from here to the end of the file.
+_rec_log="$WORK/manifest-writes"
+: > "$_rec_log"
+manifest_set() { printf '%s=%s\n' "$1" "$2" >> "$_rec_log"; }
+personal_status() { printf 'stopped\n'; }
+EXAKIT_PERSONAL_DEPLOY_DIR="$WORK/no-such-deployment"
+personal_record_manifest >/dev/null 2>&1
+check "a caller that did not probe gets the probed state, not 'healthy'" "stopped" \
+    "$(sed -n 's/^runtime\.status=//p' "$_rec_log" | tail -1)"
+: > "$_rec_log"
+personal_record_manifest "healthy" >/dev/null 2>&1
+check "...and a caller that just watched it answer records healthy" "healthy" \
+    "$(sed -n 's/^runtime\.status=//p' "$_rec_log" | tail -1)"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
