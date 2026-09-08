@@ -196,6 +196,29 @@ case "$_menu_body" in
 esac
 check "the confirmation names container and volume" "yes" "$_um_named"
 
+# THE POWERSHELL TWIN, checked the same way. It is not run here (no pwsh on a
+# developer Mac, and Show-ExakitUninstallMenu needs a terminal even where there
+# is one), so the ordering is read out of the source. That is weaker than
+# executing it and it is still the difference between shipping the warning in
+# the right place and shipping it in the wrong one.
+_ps_menu="$(awk '/^function Show-ExakitUninstallMenu/{f=1} f{print} f&&/^}$/{if(f)exit}' "$ROOT/setup/exakit.ps1")"
+_ps_warn_at="$(printf '%s\n' "$_ps_menu" | grep -n 'Show-ExakitSharedEngineDbWarning' | head -1 | cut -d: -f1)"
+_ps_gate_at="$(printf '%s\n' "$_ps_menu" | grep -n 'Type UNINSTALL to remove the items above' | head -1 | cut -d: -f1)"
+check "the twin's menu carries the warning" "yes" "$([ -n "$_ps_warn_at" ] && echo yes || echo no)"
+check "the twin's menu carries the gate"    "yes" "$([ -n "$_ps_gate_at" ] && echo yes || echo no)"
+if [ -n "$_ps_warn_at" ] && [ -n "$_ps_gate_at" ] && [ "$_ps_warn_at" -lt "$_ps_gate_at" ]; then
+    check "twin: warning before gate" "yes" "yes"
+else
+    check "twin: warning before gate" "yes" "no (warn=${_ps_warn_at:-none} gate=${_ps_gate_at:-none})"
+fi
+# And it is gone from the place it used to be: after the answer was taken.
+_ps_component="$(awk '/^function Invoke-ExakitUninstallComponent/{f=1} f{print} f&&/^}$/{if(f)exit}' "$ROOT/setup/exakit.ps1")"
+case "$_ps_component" in
+    *"share one Docker engine"*) _ps_late=yes ;;
+    *) _ps_late=no ;;
+esac
+check "twin: the hazard is no longer stated after consent" "no" "$_ps_late"
+
 # The warning itself, run: it must name the recorded container AND volume, and
 # it must be silent on a platform that does not share an engine.
 _sew() { # _sew <os> — the warning's output for that platform

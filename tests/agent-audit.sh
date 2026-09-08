@@ -155,6 +155,20 @@ _v="$(bash "$CLI" version --json 2>/dev/null)"
 check "version --json is one object with the contract keys" "yes" \
     "$(printf '%s' "$_v" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["installed"] is True; assert d["status"] in ("current","updates_pending"); assert (d["remedy"] is None) == (d["status"] == "current"); print("yes")' 2>/dev/null || echo no)"
 has "...with component rows" '"component": "exakit"' "$_v"
+# EVERY row says whether it is optional. Without this an agent could not tell
+# "you never installed this add-on" from "a piece of your kit is missing":
+# both answer status "available"/"missing" with no other difference. Checked
+# both ways round, so a builder that hardcodes true or false fails.
+check "every component row says whether it is an add-on" "yes" \
+    "$(printf '%s' "$_v" | python3 -c '
+import json, sys
+rows = json.load(sys.stdin)["components"]
+assert rows, "no component rows"
+assert all(isinstance(r.get("addon"), bool) for r in rows), "a row has no addon flag"
+by = {r["component"]: r["addon"] for r in rows}
+assert by.get("dash-server") is True, "dash-server is not marked an add-on"
+assert by.get("exakit") is False, "exakit is marked an add-on"
+print("yes")' 2>/dev/null || echo no)"
 check "version --bogus exits 2" "2" "$(bash "$CLI" version --bogus >/dev/null 2>&1; echo $?)"
 _ms="$(bash "$CLI" mcp-status --json 2>/dev/null)"
 check "mcp-status --json is one object with a client list" "yes" \
@@ -481,6 +495,22 @@ for _q in status info version mcp-status mcp-doctor; do
 done
 check "every state query x state answers 0/2/3/4 and nothing else" "" "$_codes"
 
+# EXAKIT_DB_PORT IS INPUT, so a bad one is exit 2 and not the container
+# engine's own complaint six frames down. A leading zero is a separate case:
+# bash reads 08563 as octal in an arithmetic test, so a range check alone
+# errors on it instead of answering.
+_ports=""
+for _p in 85631 abc 08563 0 -1 "85 63"; do
+    _c="$(EXAKIT_DB_PORT="$_p" EXAKIT_HOME="$WORK/bare3" bash "$CLI" --version >/dev/null 2>&1 </dev/null; echo $?)"
+    [ "$_c" = "2" ] || _ports="${_ports:+$_ports }[$_p]=$_c"
+done
+check "a malformed EXAKIT_DB_PORT is refused as bad input (exit 2)" "" "$_ports"
+# A valid port must change nothing: same code as the run that sets no port at
+# all. Pinning a literal here would only pin whatever a bare home answers.
+_c_set="$(EXAKIT_DB_PORT=8564 EXAKIT_HOME="$WORK/bare3" bash "$CLI" --version >/dev/null 2>&1 </dev/null; echo $?)"
+_c_unset="$(EXAKIT_HOME="$WORK/bare3" bash "$CLI" --version >/dev/null 2>&1 </dev/null; echo $?)"
+check "a valid EXAKIT_DB_PORT is not refused" "$_c_unset" "$_c_set"
+
 echo "R5-6. a declined destructive repair is not a success:"
 _rr="$(sed -n '/^cmd_repair_runtime()/,/^}/p' "$CLI")"
 # The window from the confirmation to the end of the declined branch: the code
@@ -560,6 +590,8 @@ has "the twin's version --json uses the closed status vocabulary" \
     '$rowStatus = "available"; $rowRemedy = "exakit marketplace' "$_ps"
 lacks "...and no longer puts a command in the status field" \
     'status          = $r.R' "$_ps"
+has "the twin marks add-on rows too" 'addon           = ($addonIds -contains $r.C)' "$_ps"
+has "...from the registry, not a hand-written set" 'Get-ExakitMarketplaceAddons | ForEach-Object { $_.Id }' "$_ps"
 has "the twin's status --json carries the service urls" 'urls            = $serviceUrls' "$_ps"
 has "...resolved through a registry hook, not a hardcoded id" 'function Get-ExakitServiceUrl' "$_ps"
 has "dash-server registers its UrlFn" 'UrlFn       = "Get-DashServerUrl"' "$(cat "$ROOT/setup/lib/exakit-common.ps1")"

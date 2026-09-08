@@ -104,7 +104,7 @@ Installing from a script or an AI agent? See [AGENTS.md](AGENTS.md).
 exakit mcp-setup
 ```
 
-A checkbox multi-select (↑/↓ to move, **Space** to toggle, **Enter** to confirm) over **Claude**, **Codex**, **Cursor**, **GitHub Copilot**, **Gemini CLI**, **OpenCode**, **Continue**, and **Skip for now**. The list is **dynamic**: every supported client is shown, and the ones already connected or not installed on this machine appear greyed out, with the reason, and cannot be selected. If everything found is already connected, the command says so and exits.
+A checkbox multi-select (↑/↓ to move, **Space** to toggle, **Enter** to confirm). A **Select All** row sits at the top, then **Claude**, **Codex**, **Cursor**, **GitHub Copilot**, **Gemini CLI**, **OpenCode**, **Continue**, and **Skip**. The list is **dynamic**: every supported client is shown, and the ones already connected or not installed on this machine appear greyed out, with the reason, and cannot be selected. If everything found is already connected, the command says so and exits.
 
 The command checks the MCP connection, prints where each config lives, and gives you a first prompt to try. It writes the exact path of the local MCP launcher into the client configs, so setup does not depend on what is on each app's PATH.
 
@@ -164,7 +164,7 @@ exakit mcp-doctor      # AI connection health check
 exakit version         # what is installed, and what is newer
 exakit update          # apply what is pending (asks before it stops the database)
 exakit marketplace     # optional add-ons (dashboards & more)
-exakit help            # every command
+exakit help            # the commands it offers
 ```
 
 Something failed mid-install? Re-run the install command. It picks up where it left off.
@@ -203,7 +203,7 @@ exakit update     # apply what is pending (asks before it stops the database)
 - **Repo stays pure source.** Runtime state, logs, credentials, backups, and generated configs live under `~/.exasol-starter-kit/`, never in this repo.
 - **Everything is inspectable.** Install scripts, MCP configs, backups, and logs remain available on disk.
 - **Local only.** The database listens on `127.0.0.1` only, passwords live in local files and are never shown on screen, and AI client configs are backed up before every change.
-- **Reversible lifecycle.** `exakit` manages the kit end to end: `status`, `start`/`stop`, `data-load`, MCP setup and maintenance (`mcp-setup`, `mcp-doctor`), `logs`, and a guarded `uninstall`. Run `exakit help` (or `exakit catalog`) to see every command.
+- **Reversible lifecycle.** `exakit` manages the kit end to end: `status`, `start`/`stop`, `data-load`, MCP setup and maintenance (`mcp-setup`, `mcp-doctor`), `logs`, and a guarded `uninstall`. Run `exakit help` (or `exakit catalog`) to see the commands it offers. A few maintenance commands are deliberately left off both lists; `exakit help <name>` still answers for them.
 
 ## See it in action
 

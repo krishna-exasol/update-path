@@ -891,6 +891,65 @@ function Invoke-CmdRepairRuntime {
     exit $LASTEXITCODE
 }
 
+# Get-ExakitNanoTargetNames - "<container>|<volume>" for the Nano deployment
+# this install recorded, so a destructive prompt can NAME what it is about to
+# delete. The manifest first (the names this install actually used, which
+# EXAKIT_NANO_CONTAINER/VOLUME may have moved), then the defaults. Twin of
+# _exakit_nano_target_names in setup/lib/common.sh.
+function Get-ExakitNanoTargetNames {
+    $c = "$(Get-ExakitManifestValue 'runtime.container')"
+    $v = "$(Get-ExakitManifestValue 'runtime.volume')"
+    if (-not $c) { $c = $env:EXAKIT_NANO_CONTAINER }
+    if (-not $c) { $c = "exasol-nano" }
+    if (-not $v) { $v = $env:EXAKIT_NANO_VOLUME }
+    if (-not $v) { $v = "exasol-nano-data" }
+    return "$c|$v"
+}
+
+# Show-ExakitSharedEngineDbWarning - the shared-Docker-engine hazard, said
+# BEFORE consent is taken.
+#
+# It used to be printed from inside Invoke-ExakitUninstallComponent, i.e. after
+# the user had already typed UNINSTALL - the one sentence that might have
+# changed their answer, delivered once the answer could no longer be changed.
+# The confirmation named neither the container nor the volume (those appeared
+# only in the record line after the removal), so there was no moment at which a
+# Windows user could have noticed they were about to delete the database a WSL
+# install on the same machine is still using. Returns $false when the hazard
+# does not apply, so a caller can use it as a test. Twin of
+# _exakit_shared_engine_db_warning in setup/lib/common.sh; there it also has to
+# ask which OS it is on, because that file runs on four of them.
+function Show-ExakitSharedEngineDbWarning {
+    if ((Get-RuntimeType) -ne "nano") { return $false }
+    $names = (Get-ExakitNanoTargetNames) -split '\|'
+    Warn2 ("Windows and WSL share one Docker engine. If this machine also has a Windows or WSL install of the kit, removing the container '" + $names[0] + "' and the volume '" + $names[1] + "' deletes that database too, and it cannot be recovered.")
+    return $true
+}
+
+# Get-ExakitExapumpProfileDirs - every directory an exapump profile store could
+# be sitting in on this machine, newest convention first.
+#
+# THE WRITER AND THE REMOVER USED TO DISAGREE. exapump.ps1 resolves its config
+# from Get-ExakitProfileHome (%USERPROFILE%), because that is where exapump.exe
+# itself looks; uninstall deleted $HOME\.exapump, because PowerShell's $HOME is
+# what it had always used. On an ordinary machine the two are the same path and
+# nothing showed. On a domain-joined machine with a redirected home they are
+# not, and `exakit uninstall` reported success while leaving config.toml -- a
+# file holding an ADMIN connection string -- on disk.
+#
+# Both are returned, deduplicated: the current location, and the legacy one an
+# older kit on this same machine may have written. Twin note: the sh side has no
+# equivalent, because $HOME is the only home a POSIX shell has.
+function Get-ExakitExapumpProfileDirs {
+    $dirs = @()
+    foreach ($base in @((Get-ExakitProfileHome), $HOME)) {
+        if (-not $base) { continue }
+        $candidate = Join-Path $base ".exapump"
+        if ($dirs -notcontains $candidate) { $dirs += $candidate }
+    }
+    return $dirs
+}
+
 # Invoke-ExakitUninstallRun -DryRun - remove every artifact the kit installs, in
 # dependency order: the local database and ALL its data, the managed MCP client
 # configs, the installed AI skills, the exapump profile, the kit home, and the
@@ -963,10 +1022,26 @@ function Invoke-ExakitUninstallRun {
     # 1) Database + all data (the Windows runtime is Nano).
     $type = Get-RuntimeType
     if ($type) {
+        # NAMED BEFORE THE REMOVAL, not only in the record line after it: on
+        # -Yes there is no gate to read, so this line and the shared-engine
+        # warning under it are the last chance to recognise the container as
+        # one the other side of a Windows+WSL machine is also using.
+        $targetNames = $null
+        if ($type -eq "nano") { $targetNames = (Get-ExakitNanoTargetNames) -split '\|' }
         if ($DryRun) {
-            Info "  will remove: local Exasol $type deployment and ALL its data"
+            if ($targetNames) {
+                Info ("  will remove: local Exasol nano deployment and ALL its data: container '" + $targetNames[0] + "', data volume '" + $targetNames[1] + "'")
+            } else {
+                Info "  will remove: local Exasol $type deployment and ALL its data"
+            }
+            [void](Show-ExakitSharedEngineDbWarning)
         } else {
-            Info "Removing the local Exasol $type deployment and all data"
+            if ($targetNames) {
+                Info ("Removing the local Exasol nano deployment and all data: container '" + $targetNames[0] + "', data volume '" + $targetNames[1] + "'")
+            } else {
+                Info "Removing the local Exasol $type deployment and all data"
+            }
+            [void](Show-ExakitSharedEngineDbWarning)
             switch ($type) {
                 "nano" { try { Remove-Nano -Data } catch { Warn2 "Database removal reported errors (continuing uninstall)" } }
                 default { Warn2 "Unknown runtime type '$type'; skipping database removal" }
@@ -1034,8 +1109,9 @@ function Invoke-ExakitUninstallRun {
     }
 
     # 4) exapump profile store (the kit created it; the binary goes in step 6).
-    $exapumpDir = Join-Path $HOME ".exapump"
-    if (Test-Path $exapumpDir) {
+    # Every candidate home, not just $HOME: see Get-ExakitExapumpProfileDirs.
+    foreach ($exapumpDir in (Get-ExakitExapumpProfileDirs)) {
+        if (-not (Test-Path $exapumpDir)) { continue }
         if ($DryRun) { Info "  will remove: exapump profiles at $exapumpDir" }
         else { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $exapumpDir }
     }
@@ -1304,6 +1380,8 @@ function Show-ExakitUninstallMenu {
     Warn2 "This is IRREVERSIBLE. Removed data cannot be recovered."
     if ($picked -contains "database" -or $picked -contains "everything") {
         Warn2 "The database selection deletes ALL local database data."
+        # BEFORE the typed gate, never after it.
+        [void](Show-ExakitSharedEngineDbWarning)
     }
     if (-not [Environment]::UserInteractive -or [Console]::IsInputRedirected) {
         Fail "uninstall needs an interactive terminal to confirm; use -Yes for the scripted full uninstall."
@@ -1331,10 +1409,12 @@ function Invoke-ExakitUninstallComponent {
     param([Parameter(Mandatory)][string]$Key)
     switch ($Key) {
         "database" {
-            # Twin of the shared-engine note in _exakit_uninstall_component:
-            # Windows and WSL share one Docker engine, so this may be the
-            # database the WSL side installed and still uses.
-            Warn2 "Windows and WSL share one Docker engine: removing this container and volume removes the database for BOTH sides."
+            # NO shared-engine warning here any more: by this line the user has
+            # typed UNINSTALL and the removal is under way. The hazard is stated
+            # before the gate instead (Show-ExakitSharedEngineDbWarning, called
+            # from Show-ExakitUninstallMenu), which is the only place saying it
+            # can still change the answer. Twin of the same move in
+            # _exakit_uninstall_component.
             Info "Removing the local Exasol Nano deployment and all data"
             try { Remove-Nano -Data } catch { Warn2 "Database removal reported errors" }
             Remove-ExakitStepDone "runtime"
@@ -1358,7 +1438,9 @@ function Invoke-ExakitUninstallComponent {
         "exapump" {
             Info "Removing exapump and its profiles"
             Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $script:BinDir "exapump.exe")
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $HOME ".exapump")
+            foreach ($exapumpDir in (Get-ExakitExapumpProfileDirs)) {
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $exapumpDir
+            }
             Remove-ExakitManifestValue "components.exapump"
             Remove-ExakitStepDone "exapump"
         }
@@ -1562,6 +1644,13 @@ function Invoke-CmdVersion {
         # exakit_print_version_table. `exakit version --json` used to print the
         # decorated table and exit 0.
         $components = @()
+        # WHICH ROWS ARE OPTIONAL. Nothing in a component object said whether it
+        # is part of the kit or an add-on someone chose, so an agent reading
+        # `status: "available"` could not tell "you have not installed this
+        # optional tool" from "a piece of your kit is missing". The registry is
+        # the source, never a hand-written set. Twin of addon_ids in
+        # exakit_print_version_table --json.
+        $addonIds = @(Get-ExakitMarketplaceAddons | ForEach-Object { $_.Id })
         foreach ($r in $rows) {
             # The raw cell doubles as the HUMAN Action column, so it carried
             # whatever a person should do next - "exakit marketplace",
@@ -1585,6 +1674,7 @@ function Invoke-CmdVersion {
             elseif ($rowStatus.EndsWith("available")) { $rowStatus = "update_available"; $rowRemedy = "exakit update $($r.C)" }
             $components += [ordered]@{
                 component       = $r.C
+                addon           = ($addonIds -contains $r.C)
                 installed       = $(if ($r.V -in @("not installed", "not available", "")) { $null } else { $r.V })
                 installed_label = $r.V
                 advertised      = $(if ($r.A -in @("unknown", "")) { $null } else { $r.A })
