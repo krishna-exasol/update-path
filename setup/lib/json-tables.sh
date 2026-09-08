@@ -490,7 +490,7 @@ _json_tables_fetch_verified() {
         return 0
     fi
     rm -f "$_jfv_dest"
-    warn "No checksum is available for $_jfv_asset; refusing an unverified artifact. Usually the release is still publishing or the GitHub API was unreachable - retry with: exakit update json-tables"
+    warn "No checksum is available for $_jfv_asset; refusing an unverified artifact. Usually the release is still publishing or the GitHub API was unreachable - retry with: exakit update json-tables. Add its digest to versions.json (components.json-tables.sha256) or, at your own risk, override with EXAKIT_ALLOW_UNVERIFIED_JSON_TABLES=1."
     return 1
 }
 

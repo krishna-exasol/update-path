@@ -286,6 +286,16 @@ function Write-DashServerLauncher {
     }
     $lines += @(
         ":run"
+        # Bind where the kit says, not where dash-server defaults. Without
+        # these the pre-flight check above verdicts one port and the server
+        # binds its own built-in default, so an install that stepped up past a
+        # busy 5100 starts on the busy port - or, if the upstream default host
+        # is not loopback, exposes an unauthenticated control plane on the LAN.
+        # Setdefaults, like DASH_SERVER_INSTANCE_PATH above: a user who set
+        # their own still wins. Twin of the same block in
+        # dash_server_write_launcher.
+        "if not defined DASH_SERVER_HOST set `"DASH_SERVER_HOST=127.0.0.1`""
+        "if not defined DASH_SERVER_PORT set `"DASH_SERVER_PORT=$($script:DashServerPort)`""
         "`"$exe`" %*"
     )
     try {

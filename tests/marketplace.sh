@@ -5,6 +5,14 @@
 # module's version resolution, launcher generation and soft-fail accounting.
 # Pure logic against a sandboxed kit home: no network, no installs.
 #
+# EXPECT THREE TO FOUR MINUTES. A run that looks stuck is almost certainly not:
+# the suite is hermetic and offline, and the time goes on hundreds of
+# manifest_get / manifest_set calls, each of which starts a Python process.
+# (Measured with EXAKIT_ABOUT_OFFLINE=1 as well, so the About fetch is not the
+# cause.) Nothing here reaches the network or installs anything, so a long run
+# is slow, never hung — leave it to finish rather than interrupting it, which
+# is how a half-run gets mistaken for a failure.
+#
 #   bash tests/marketplace.sh
 
 set -u
@@ -233,6 +241,23 @@ has  "profile bootstrap goes through the env secret" "DASH_SERVER_EXASOL_SECRET_
 # the user dash-server's single-coordinator traceback.
 has  "the launcher refuses a duplicate politely" "already running" "$_launcher_body"
 has  "and points at the state and log commands" "exakit logs dash-server" "$_launcher_body"
+# ADD-07: the launcher printed a pre-flight verdict for the RECORDED port and
+# then execed dash-server with no port at all, so it bound the upstream default
+# - on a machine that moved off 5100, the busy one. The bind host was left to
+# upstream too, on the one path the kit does not control, while the module
+# asserts loopback everywhere else. Both are setdefaults, so an exported value
+# still wins.
+( EXAKIT_DASH_SERVER_PORT=5177 dash_server_write_launcher >/dev/null 2>&1 )
+_launcher_5177="$(cat "$_launcher" 2>/dev/null)"
+has  "the launcher passes the recorded port to the server" 'DASH_SERVER_PORT:=5177' "$_launcher_5177"
+has  "...and pins the bind host to loopback"               'DASH_SERVER_HOST:=127.0.0.1' "$_launcher_5177"
+has  "...exported, or the child never sees them"           'export DASH_SERVER_HOST DASH_SERVER_PORT' "$_launcher_5177"
+# The twin: Windows had the identical hole.
+has  "the PowerShell launcher does the same" 'if not defined DASH_SERVER_PORT set' \
+    "$(cat "$ROOT/setup/lib/dash-server.ps1")"
+has  "...host too"                           'if not defined DASH_SERVER_HOST set' \
+    "$(cat "$ROOT/setup/lib/dash-server.ps1")"
+( dash_server_write_launcher >/dev/null 2>&1 )   # back to the recorded port
 
 echo "generic registry (no per-add-on case arms):"
 # The whole point of the generic arms: an id the registry does not carry must
@@ -1960,6 +1985,31 @@ has "the latest lookup dispatches the hook first"   '$addon.LatestFn' "$COMMON_P
 check "dash-server.ps1 reads the recorded port back" "1" \
     "$(grep -c 'Get-ExakitManifestValue "components.dash_server.port"' "$ROOT/setup/lib/dash-server.ps1")"
 has "...resolved before every entry point" 'function Resolve-DashServerPort' "$(cat "$ROOT/setup/lib/dash-server.ps1")"
+
+# ADD-09: json_tables_update returns early when the installed build already IS
+# the advertised one; Update-JsonTables had no such comparison and no
+# already-installed guard behind it, so `exakit update` on Windows re-downloaded
+# the wheel, the ingest engine and the compiled cargo shim on every run while
+# macOS and Linux did nothing. The two halves also have to AGREE in the sentence
+# an agent parses.
+JT_PS_TP="$(cat "$ROOT/setup/lib/json-tables.ps1")"
+JT_SH_TP="$(cat "$ROOT/setup/lib/json-tables.sh")"
+has "Update-JsonTables compares the installed build" \
+    '$current -and $current -eq $available' "$JT_PS_TP"
+has "...and stops instead of re-downloading" \
+    'Ok "JSON Tables is already current ($current)"' "$JT_PS_TP"
+has "...rewriting the launcher first, like the shell half" \
+    '[void](Write-JsonTablesLauncher)' "$JT_PS_TP"
+has "the shell half says the same words" \
+    'JSON Tables is already current' "$JT_SH_TP"
+
+# ADD-11: the code CLI drains inherited stdin, which ate the marketplace's own
+# row loop and silently dropped every add-on listed after exasol-vscode. The
+# shell half closes stdin (</dev/null); the Windows half must redirect it too -
+# code.cmd is a batch wrapper around the same Node process. CI never catches
+# this: a runner has no VS Code, so the CLI is never run.
+has "the code CLI cannot reach the console on Windows" \
+    '$null | & $cli @Arguments' "$(cat "$ROOT/setup/lib/exasol-vscode.ps1")"
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
