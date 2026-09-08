@@ -280,7 +280,26 @@ cmd_status() {
     if [ "$_cs_json" -eq 0 ]; then ui_spin_end; fi
     _cs_running=0
     case "$_cs_db" in running*) _cs_running=1 ;; esac
-    _cs_autostart="$(manifest_get autostart.enabled 2>/dev/null || true)"
+    # REALITY, NOT THE RECORDED INTENT. This read the manifest's
+    # autostart.enabled, which is what the user last ASKED for - so a machine
+    # whose boot entry had since gone reported "autostart: true" for a database
+    # nothing would restart. On the container path that is routine: recreating
+    # the container drops its restart policy, and a stop/start cycle was enough
+    # to turn autostart off with the manifest still saying it was on. The
+    # answer to "will this come back after a reboot" has to be a probe, and
+    # _exakit_autostart_registered is the probe `exakit autostart` already
+    # uses. Same rule as that command: on means EVERY service is registered,
+    # because a partly-registered set will not bring the kit back.
+    _cs_autostart=false
+    _cs_as_total=0
+    _cs_as_on=0
+    for _cs_as_id in $(exakit_service_ids 2>/dev/null); do
+        _cs_as_total=$(( _cs_as_total + 1 ))
+        if _exakit_autostart_registered "$_cs_as_id" 2>/dev/null; then
+            _cs_as_on=$(( _cs_as_on + 1 ))
+        fi
+    done
+    [ "$_cs_as_total" -gt 0 ] && [ "$_cs_as_on" -eq "$_cs_as_total" ] && _cs_autostart=true
     if [ "$_cs_json" -eq 0 ]; then ui_spin_begin "Checking which datasets are loaded"; fi
     _cs_datasets="$(exakit_loaded_datasets 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
     if [ "$_cs_json" -eq 0 ]; then ui_spin_end; fi
