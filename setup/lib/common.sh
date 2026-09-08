@@ -186,6 +186,25 @@ EXAKIT_ABOUT_WIDTH="${EXAKIT_ABOUT_WIDTH:-44}"
 EXAKIT_DB_PORT_EXPLICIT="${EXAKIT_DB_PORT:+1}"
 EXAKIT_DB_PORT="${EXAKIT_DB_PORT:-8563}"
 
+# VALIDATED HERE, at the one place the value enters the kit. A port typed wrong
+# used to travel all the way to the container engine and come back as the
+# engine's own complaint -- "invalid published port", six frames down, naming
+# neither the variable nor what was wrong with it. A leading zero is rejected
+# too: `[ 08563 -lt 1 ]` is an arithmetic error in bash, not a comparison, so
+# the range test below would itself fail on one. Exit 2 is the contract's
+# "bad input", the same code an unknown subcommand answers with. die() and the
+# UI palette are defined much further down this file, so this speaks plainly.
+case "$EXAKIT_DB_PORT" in
+    ''|*[!0-9]*|0*)
+        printf '\n  [x] EXAKIT_DB_PORT must be a whole number from 1 to 65535, with no leading zero (got: %s)\n\n' "$EXAKIT_DB_PORT" >&2
+        exit 2
+        ;;
+esac
+if [ "$EXAKIT_DB_PORT" -gt 65535 ]; then
+    printf '\n  [x] EXAKIT_DB_PORT must be a whole number from 1 to 65535 (got: %s)\n\n' "$EXAKIT_DB_PORT" >&2
+    exit 2
+fi
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -4995,8 +5014,15 @@ exakit_print_version_table() {
             _uvt_i=$((_uvt_i + 1))
         done
         run_python - "$_uvt_tmp" "$_pending" "$(exakit_component_current exakit 2>/dev/null || printf unknown)" \
-            "$(manifest_get installed_at 2>/dev/null || true)" "$(exakit_versions_source 2>/dev/null || true)" <<'EXAKIT_VJ_PY'
+            "$(manifest_get installed_at 2>/dev/null || true)" "$(exakit_versions_source 2>/dev/null || true)" \
+            "$(exakit_marketplace_addons 2>/dev/null | cut -d'|' -f1 | tr '\n' ' ')" <<'EXAKIT_VJ_PY'
 import json, sys
+# WHICH ROWS ARE OPTIONAL. Nothing in a component object said whether it is
+# part of the kit or an add-on someone chose, so an agent reading
+# `status: "available"` could not tell "you have not installed this optional
+# tool" from "a piece of your kit is missing". The registry is the source:
+# these are the ids exakit_marketplace_addons lists, never a hand-written set.
+addon_ids = set((sys.argv[6] if len(sys.argv) > 6 else "").split())
 rows = []
 with open(sys.argv[1], encoding="utf-8") as handle:
     for line in handle:
@@ -5030,6 +5056,7 @@ with open(sys.argv[1], encoding="utf-8") as handle:
             row_status, remedy = status, None
         rows.append({
             "component": comp,
+            "addon": comp in addon_ids,
             "installed": None if ver in ("not installed", "not available", "") else ver,
             "installed_label": ver,
             "advertised": None if avail in ("unknown", "") else avail,

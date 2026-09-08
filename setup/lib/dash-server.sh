@@ -17,7 +17,13 @@
 #     release publishes no digest for the tarball, unlike the binary add-ons
 #     components. (GitHub source tarballs have no stable published digest, so
 #     there is nothing kit-side to pin a checksum against.)
-#   - Control plane: 127.0.0.1:5100 by default (env DASH_SERVER_HOST/PORT).
+#   - Control plane: 127.0.0.1:5100. The PORT half is settable
+#     (DASH_SERVER_PORT, and the kit records the port it chose). The HOST
+#     half is NOT: every start below passes --host 127.0.0.1 explicitly,
+#     which outranks DASH_SERVER_HOST. This control plane is
+#     unauthenticated, so binding it off loopback would publish the
+#     database to the LAN. The env setdefault in the launcher is a floor
+#     for someone running that launcher by hand, not a knob the kit reads.
 #   - Exasol profile bootstrap at startup via DASH_SERVER_EXASOL_* env vars;
 #     the launcher below feeds it the kit's local database.
 #

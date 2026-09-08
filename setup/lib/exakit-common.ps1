@@ -268,7 +268,37 @@ $script:VersionsSchemaAhead = $false
 # so a support question ("where did this version come from?") has an answer.
 $script:VersionsSourceUsed = ""
 
+# Protect-ExakitDirectory - the Windows counterpart of `chmod 700` on the
+# credentials directory.
+#
+# The bash half has always run `chmod 700 "$EXAKIT_CREDS_DIR"`. The Windows half
+# protected the credential FILES (Protect-ExakitFile) and left the directory
+# holding them with whatever it inherited from the profile tree, which on a
+# corporate image routinely grants BUILTIN\Users read. Inheritance is broken
+# rather than merely overridden, matching the file rule, so a directory created
+# under a permissive parent does not stay permissive.
+#
+# Defined HERE, above the New-Item below, on purpose: PowerShell executes a
+# script top to bottom, so a function defined further down this file does not
+# exist yet at that line.
+function Protect-ExakitDirectory {
+    param([Parameter(Mandatory)][string]$Path)
+    # ACL APIs are Windows-only; the guard keeps this from throwing under
+    # cross-platform PowerShell 7 during development on macOS/Linux.
+    if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) { return }
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        [System.Security.Principal.WindowsIdentity]::GetCurrent().User,
+        "FullControl", "ContainerInherit, ObjectInherit", "None", "Allow")
+    $acl.AddAccessRule($rule)
+    Set-Acl -Path $Path -AclObject $acl
+}
+
 New-Item -ItemType Directory -Force -Path $script:ExakitHome, $script:LogDir, $script:CredsDir, $script:BinDir | Out-Null
+# Best-effort: a home on a network share can refuse Set-Acl outright, and that
+# is not a reason to stop the CLI from running. The files keep their own ACL.
+try { Protect-ExakitDirectory $script:CredsDir } catch { }
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -3422,6 +3452,10 @@ function New-ExakitPassword {
 function Set-ExakitCredential {
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Value)
     New-Item -ItemType Directory -Force -Path $script:CredsDir | Out-Null
+    # Re-applied on every write: the directory may have been recreated since
+    # startup (a repair, a manual delete), and a secret must never land in one
+    # that inherited the profile tree's ACL.
+    try { Protect-ExakitDirectory $script:CredsDir } catch { }
     $target = Join-Path $script:CredsDir $Name
     # A DIRECTORY at the target is not a stale credential, it is debris - a
     # container was started while this file was missing and the engine created

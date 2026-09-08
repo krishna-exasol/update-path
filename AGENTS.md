@@ -67,6 +67,7 @@ Flags do not travel through a pipe, so choices are env vars. They work on all pl
 | `EXAKIT_REPLACE_DB=1` | macOS only: consent to **delete a stopped Exasol deployment and its data** and deploy fresh. Without it, `EXAKIT_REUSE_DB=0` (or answering no) stops the install with guidance instead of destroying anything. `exakit repair-runtime` sets it itself after asking its own destructive question |
 | `EXAKIT_PREFLIGHT=1` | Check machine requirements only, installs nothing. Both installers: `... \| EXAKIT_PREFLIGHT=1 sh`, or `$env:EXAKIT_PREFLIGHT = '1'` before `irm ... \| iex` |
 | `EXAKIT_DRY_RUN=1` | Download the kit for inspection, installs nothing |
+| `EXAKIT_LOCAL_KIT=/path/to/checkout` | Install from a local checkout instead of downloading. On WSL this is the only supported way to install from a Windows-side clone: pass the `/mnt/c/...` path |
 | `EXAKIT_DB_PORT=8564` | Alternate DB port (Linux and Windows container path only). Set it once, for the install: the kit records it and every later `exakit start` reuses it |
 
 Version and update behaviour (all optional, sensible defaults):
@@ -160,6 +161,7 @@ What an agent needs to know:
 - The runtime update keeps your data: the container is recreated over the same data volume and the previous image is put back if the new one does not come up. There is no data backup step because nothing deletes data. The one exception is an Exasol Personal **major** upgrade, which is a real data migration: `exakit update` reports it, never starts it, and points at the Exasol Personal migration guidance for that version.
 - Nothing here can hang. Version resolution degrades to a cached copy, then to the copy that shipped with the kit; no command fails because an update check could not reach the network.
 - `exakit version` is the one command that reports versions: one row per component and add-on, each with what is installed and whether something newer is advertised. There is no separate `update-check` — it was merged into `version`.
+- In `exakit version --json`, every row in `components` carries **`addon`**: `true` for an optional tool from the marketplace, `false` for a part of the kit itself. Branch on it before you act on `status` — an add-on that reads `available` was never installed and nothing is wrong, while a kit component that reads `missing` is a gap `remedy` will close. Each row's `status` is one of `current`, `ahead`, `unsupported`, `unknown`, `available`, `blocked_on_kit`, `missing`, `update_available`, and `remedy` is the command for it or `null`.
 - If the advertised version is **older** than the installed one, nothing is offered and nothing is applied: `exakit version` shows a status of `none`, and asking for that component by name succeeds and does nothing. The kit has no downgrade path, by any route or override. To withdraw a faulty release, publish a higher version.
 - A component that reports `not installed` (most often `pyexasol`, whose install step is deliberately non-fatal) is repaired by the same command: `exakit update`.
 
