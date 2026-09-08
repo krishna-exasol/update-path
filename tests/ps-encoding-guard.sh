@@ -97,6 +97,15 @@ EOF
 # preceding lines, which covers the save/set/call/restore shape used
 # everywhere in this repo, and a bare try/catch counts too since the
 # exception is then handled.
+#
+# The match is deliberately NOT anchored to the start of the line. It was, and
+# that let the commonest shape of all through untouched: `$v = & $python -c ...
+# 2>$null`, which is a probe whose whole purpose is to answer a question about
+# a possibly-broken thing. Six sites were hiding behind the anchor, among them
+# Get-PyexasolInstalledVersion and Get-DashServerPackageVersion (both read by
+# `exakit version`) and Test-NanoFirstDeployArgs, where the engine writing
+# "No such container" to stderr is the ORDINARY case. Whole-line comments are
+# skipped so prose describing the trap does not trip it.
 while IFS= read -r file; do
     rel="${file#"$ROOT"/}"
     bad=""
@@ -110,7 +119,7 @@ while IFS= read -r file; do
         esac
         bad="${bad:+$bad,}$n"
     done <<INNER
-$(grep -nE '^[[:space:]]*&[[:space:]].*2>(\$null|&1)' "$file" 2>/dev/null | cut -d: -f1)
+$(grep -nE '(^|[^`])&[[:space:]]+[^ ]+.*2>(\$null|&1)' "$file" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' | cut -d: -f1)
 INNER
     if [ -n "$bad" ]; then
         fail "$rel invokes a native command with redirected stderr outside a Continue window (lines $bad) - 5.1 turns that into a terminating error before \$LASTEXITCODE is read"

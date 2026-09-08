@@ -75,9 +75,19 @@ function Get-DashServerLauncherPath {
 function Get-DashServerPackageVersion {
     $python = Get-DashServerVenvPython
     if (-not (Test-Path $python)) { return $null }
-    $version = & $python -c "from importlib.metadata import version; print(version('dash-server'))" 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return ($version | Out-String).Trim()
+    # stderr from a broken venv is a TERMINATING error under the global
+    # "Stop" preference, so this probe has to answer inside a Continue window
+    # or it crashes `exakit version` and `exakit marketplace` instead of
+    # reporting "not installed".
+    $prevEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $version = & $python -c "from importlib.metadata import version; print(version('dash-server'))" 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return ($version | Out-String).Trim()
+    } catch {
+        return $null
+    } finally { $ErrorActionPreference = $prevEap }
 }
 
 function Get-DashServerInstalledVersion {
@@ -435,7 +445,13 @@ function Test-DashServer {
 # makes this a no-op. Twin of _dash_server_restore_package_data.
 function Restore-DashServerPackageData {
     $python = Get-DashServerVenvPython
-    $site = & $python -c 'import dash_server, os; print(os.path.dirname(dash_server.__file__))' 2>$null
+    $prevEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $site = & $python -c 'import dash_server, os; print(os.path.dirname(dash_server.__file__))' 2>$null
+    } catch {
+        $site = $null
+    } finally { $ErrorActionPreference = $prevEap }
     if (-not $site -or -not (Test-Path $site)) { return }
 
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("exakit-ds-data-" + [IO.Path]::GetRandomFileName())

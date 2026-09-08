@@ -529,7 +529,13 @@ function Install-JsonTables {
 function Restore-JsonTablesPackageData {
     $python = Get-JsonTablesVenvPython
     if (-not (Test-Path $python)) { return }
-    $site = & $python -c "import exasol_json_tables, os; print(os.path.dirname(exasol_json_tables.__file__))" 2>$null
+    $prevEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $site = & $python -c "import exasol_json_tables, os; print(os.path.dirname(exasol_json_tables.__file__))" 2>$null
+    } catch {
+        $site = $null
+    } finally { $ErrorActionPreference = $prevEap }
     if (-not $site -or -not (Test-Path $site)) { return }
     $asset = Join-Path $site "preprocessor_assets\jvs_preprocessor_lib.lua"
     if (Test-Path $asset) { return }
