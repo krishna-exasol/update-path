@@ -1138,11 +1138,24 @@ _exakit_has_system_python3() {
     [ "${EXAKIT_DISABLE_SYSTEM_PYTHON:-0}" != "1" ] || return 1
     command -v python3 >/dev/null 2>&1 || return 1
     if [ -z "$_EXAKIT_SYSTEM_PY_OK" ]; then
-        if python3 -c "import sys; req = tuple(map(int, '$EXAKIT_MIN_PYTHON'.split('.'))); raise SystemExit(0 if sys.version_info[:2] >= req else 1)" 2>/dev/null; then
+        # Keep the probe's stderr: it is the difference between an interpreter
+        # that is too old and one that is not an interpreter at all.
+        if _ehsp_err="$(python3 -c "import sys; req = tuple(map(int, '$EXAKIT_MIN_PYTHON'.split('.'))); raise SystemExit(0 if sys.version_info[:2] >= req else 1)" 2>&1)"; then
             _EXAKIT_SYSTEM_PY_OK="yes"
         else
             _EXAKIT_SYSTEM_PY_OK="no"
-            _exakit_log_file "INFO  system python3 is older than $EXAKIT_MIN_PYTHON — using the uv-managed Python runtime instead"
+            # SAY THE REAL REASON. On a Mac without the Xcode Command Line
+            # Tools /usr/bin/python3 is a 118 KB xcrun shim: it exists, it
+            # satisfies `command -v`, and it fails to run at all. Logging
+            # "older than 3.11" about an interpreter that is not there is the
+            # only record of the decision, and it sent readers to
+            # `brew install python` to fix a version that was never the problem.
+            case "$_ehsp_err" in
+                *xcrun*|*"invalid active developer path"*|*"command line developer tools"*)
+                    _exakit_log_file "INFO  /usr/bin/python3 is the Xcode Command Line Tools stub, not a real interpreter — using the uv-managed Python runtime instead" ;;
+                *)
+                    _exakit_log_file "INFO  the system python3 is not usable for this kit (needs >= $EXAKIT_MIN_PYTHON) — using the uv-managed Python runtime instead" ;;
+            esac
         fi
     fi
     [ "$_EXAKIT_SYSTEM_PY_OK" = "yes" ]
@@ -6302,9 +6315,32 @@ ensure_path_hint() {
 
     # The user's interactive shell decides which profile matters; fish has
     # no POSIX profile, so it keeps the printed hint instead of a bad edit.
-    case "$(basename "${SHELL:-}")" in
+    _eph_shell="$(basename "${SHELL:-}")"
+    # An empty $SHELL (cron, `env -i`, some CI images) used to fall through to
+    # the catch-all and write ~/.profile, which zsh does not read either.
+    # macOS has shipped zsh as the default login shell since Catalina, so that
+    # is the honest guess there rather than a file nobody sources.
+    if [ -z "$_eph_shell" ] && [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+        _eph_shell="zsh"
+    fi
+    case "$_eph_shell" in
         zsh)  _eph_profile="$HOME/.zshrc" ;;
-        bash) _eph_profile="$HOME/.bashrc" ;;
+        bash)
+            # macOS Terminal.app and iTerm2 start bash as a LOGIN shell, which
+            # reads ~/.bash_profile (or ~/.profile) and NEVER ~/.bashrc. Writing
+            # .bashrc there earned a green tick for an edit no new terminal
+            # would ever read. Linux terminals start non-login interactive bash,
+            # which does read .bashrc, so only macOS diverges.
+            if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+                if [ -f "$HOME/.bash_profile" ] || [ ! -f "$HOME/.profile" ]; then
+                    _eph_profile="$HOME/.bash_profile"
+                else
+                    _eph_profile="$HOME/.profile"
+                fi
+            else
+                _eph_profile="$HOME/.bashrc"
+            fi
+            ;;
         fish)
             warn "$1 is not on your PATH. For fish, run: fish_add_path $1"
             return 0
@@ -6324,6 +6360,30 @@ ensure_path_hint() {
         warn "$1 is not on your PATH and $_eph_profile is not writable. Add this to your shell profile:"
         printf '      %s%s%s   export PATH="%s:$PATH"\n' "${UI_DIM:-}" "${UI_VB:-|}" "${UI_RESET:-}" "$1" >&2
     fi
+}
+
+# exakit_unsigned_binary_hint <path> <exit-status> — the macOS diagnosis for a
+# freshly downloaded binary that was KILLED instead of run. Prints nothing and
+# returns 1 when that is not what happened.
+#
+# On Apple silicon the kernel refuses to execute an arm64 Mach-O that carries no
+# code signature at all: the process dies on SIGKILL (137) with nothing on
+# stderr. Every probe downstream then reads that silence as an answer — the
+# launcher capability probe concludes "this launcher version has no explicit
+# start command" — so the one thing nobody is told is that the binary never ran.
+# Quarantine is NOT this: curl does not set com.apple.quarantine, so no `xattr`
+# step is needed or offered here.
+exakit_unsigned_binary_hint() {
+    [ "$(uname -s 2>/dev/null)" = "Darwin" ] || return 1
+    case "${2:-}" in
+        137|9) ;;
+        *) return 1 ;;
+    esac
+    error "$1 was installed but the kernel killed it on its first run (SIGKILL, no output)."
+    info "On Apple silicon that is a code-signature problem in the downloaded release, not a problem with this machine."
+    info "Confirm it with: codesign -dv \"$1\"   (\"code object is not signed at all\" is the signature failure)"
+    info "That is a broken release and worth reporting. An ad-hoc signature unblocks you locally: codesign -s - \"$1\""
+    return 0
 }
 
 exakit_repo_root() {

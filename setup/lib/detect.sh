@@ -329,17 +329,28 @@ preflight_report() {
     fi
 
     # port
-    if port_in_use "${EXAKIT_DB_PORT:-8563}"; then
-        # EXAKIT_DB_PORT only moves the CONTAINER deployments; the macOS
-        # deployment always binds 8563, so offering the variable there sends
-        # the reader to a knob that silently does nothing.
+    #
+    # PROBE THE PORT THE INSTALL WILL ACTUALLY BIND. EXAKIT_DB_PORT only moves
+    # the CONTAINER deployments; the macOS deployment always binds 8563. The
+    # preflight honoured the variable everywhere, so on a Mac with
+    # EXAKIT_DB_PORT=8564 it reported "Port 8564 is free" — a green tick for a
+    # port the deploy never touches — and never looked at 8563 at all. The
+    # preflight's whole job is to answer "will this work here", so it asks
+    # about the right port and drops the knob from the remedy where it does
+    # nothing.
+    if [ "$(detect_os)" = "macos" ]; then
+        _pf_port=8563
+    else
+        _pf_port="${EXAKIT_DB_PORT:-8563}"
+    fi
+    if port_in_use "$_pf_port"; then
         if [ "$(detect_os)" = "macos" ]; then
-            _pf_note "Port ${EXAKIT_DB_PORT:-8563} is in use — fine if that is an existing local Exasol (it is adopted); otherwise stop the other application (the macOS deployment needs 8563; EXAKIT_DB_PORT does not apply)"
+            _pf_note "Port $_pf_port is in use — fine if that is an existing local Exasol (it is adopted); otherwise stop the other application (the macOS deployment cannot use a different port)"
         else
-            _pf_note "Port ${EXAKIT_DB_PORT:-8563} is in use — fine if that is an existing local Exasol; otherwise stop the other application or set EXAKIT_DB_PORT"
+            _pf_note "Port $_pf_port is in use — fine if that is an existing local Exasol; otherwise stop the other application or set EXAKIT_DB_PORT"
         fi
     else
-        _pf_ok "Port ${EXAKIT_DB_PORT:-8563} is free"
+        _pf_ok "Port $_pf_port is free"
     fi
 
     # network reachability (downloads come from these). Any HTTP response

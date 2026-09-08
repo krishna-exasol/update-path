@@ -159,11 +159,6 @@ ui_banner() {
     printf '\n'
 }
 
-# ui_rule — a full-width accent divider (box inner width).
-ui_rule() {
-    printf '  %s%s%s\n' "$UI_DIM" "$(ui_repeat "$UI_HR" "$UI_BOX_W")" "$UI_RESET"
-}
-
 # ui_box_top <title> / ui_box_line <text> / ui_box_bottom — a titled frame.
 ui_box_top() {
     _uibt_title=" $1 "
