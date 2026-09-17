@@ -71,14 +71,14 @@ EXAKIT_PYEXASOL_VERSION="${EXAKIT_PYEXASOL_VERSION:-}"
 # possible (offline install, API rate limit, private mirror). Successful latest
 # resolutions are recorded in the manifest so later updates compare against the
 # version that was actually installed.
-# 2.3.0-rc2 DELIBERATELY, and only until 2.3.0 final publishes: the flipped
+# 2.3.0-rc3 DELIBERATELY, and only until 2.3.0 final publishes: the flipped
 # Linux and Windows defaults need a launcher that HAS local deployments there,
 # which no 2.2 release does. Moving to final is this constant plus
 # components.personal.version in versions.json, together in one commit.
-EXAKIT_PERSONAL_VERSION_FALLBACK="${EXAKIT_PERSONAL_VERSION_FALLBACK:-2.3.0-rc2}"
-EXAKIT_EXAPUMP_VERSION_FALLBACK="${EXAKIT_EXAPUMP_VERSION_FALLBACK:-0.12.0}"
+EXAKIT_PERSONAL_VERSION_FALLBACK="${EXAKIT_PERSONAL_VERSION_FALLBACK:-2.3.0-rc3}"
+EXAKIT_EXAPUMP_VERSION_FALLBACK="${EXAKIT_EXAPUMP_VERSION_FALLBACK:-0.13.0}"
 EXAKIT_MCP_VERSION_FALLBACK="${EXAKIT_MCP_VERSION_FALLBACK:-2.2.0}"
-EXAKIT_PYEXASOL_VERSION_FALLBACK="${EXAKIT_PYEXASOL_VERSION_FALLBACK:-2.3.2}"
+EXAKIT_PYEXASOL_VERSION_FALLBACK="${EXAKIT_PYEXASOL_VERSION_FALLBACK:-2.4.1}"
 # Marketplace add-ons (dash-server, ...) carry their own version constants in
 # their module files — they are not part of the install flow, so nothing here
 # needs to know them.
@@ -1539,12 +1539,21 @@ PY
 manifest_set_many() {
     [ -f "$EXAKIT_MANIFEST" ] || return 0
     exakit_can_run_python || return 0
-    run_python - "$EXAKIT_MANIFEST" <<'PY' 2>/dev/null || true
+    # THE LINES ARE READ HERE, NOT BY PYTHON. `run_python -` takes the program
+    # itself from stdin - the heredoc below - so the script's own
+    # sys.stdin.read() always came back empty: every caller's piped keys were
+    # silently dropped and this function had never written anything. The
+    # dataset-flag healing in exakit_verified_datasets went through it, and a
+    # rebuilt database therefore kept reading as "loaded". Found when a
+    # repair-runtime reloaded nothing on a real machine.
+    _msm_lines="$(cat)"
+    [ -n "$_msm_lines" ] || return 0
+    run_python - "$EXAKIT_MANIFEST" "$_msm_lines" <<'PY' 2>/dev/null || true
 import fcntl, json, os, sys, tempfile
 
 path = sys.argv[1]
 wanted = []
-for line in sys.stdin.read().splitlines():
+for line in sys.argv[2].splitlines():
     if "=" not in line:
         continue
     key, _, value = line.partition("=")

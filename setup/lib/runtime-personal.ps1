@@ -20,11 +20,11 @@
 #     the flag is probed per subcommand exactly as the sh side does
 
 $script:PersonalRepo            = "exasol/exasol-personal"
-# 2.3.0-rc2 deliberately, until 2.3.0 final publishes - the flipped Windows
+# 2.3.0-rc3 deliberately, until 2.3.0 final publishes - the flipped Windows
 # default needs a launcher with Windows local deployments, which no 2.2 release
 # has. Twin of EXAKIT_PERSONAL_VERSION_FALLBACK in common.sh; both move to
 # final together with components.personal.version.
-$script:PersonalVersionFallback = "2.3.0-rc2"
+$script:PersonalVersionFallback = "2.3.0-rc3"
 $script:PersonalPort            = 8563
 $script:PersonalProbeTimeout    = if ($env:EXAKIT_PERSONAL_PROBE_TIMEOUT) { [int]$env:EXAKIT_PERSONAL_PROBE_TIMEOUT } else { 10 }
 $script:PersonalMinRamGb        = if ($env:EXAKIT_PERSONAL_MIN_RAM_GB)  { [int]$env:EXAKIT_PERSONAL_MIN_RAM_GB }  else { 8 }
@@ -144,12 +144,62 @@ function Test-PersonalDeploymentExists {
     return ($null -ne $answer)
 }
 
-# Test-PersonalDbAnswers - is the thing on the SQL port actually Exasol? The
-# launcher's own view; a port that is merely open is never the answer (see
-# Get-PersonalStatus for why).
+# Test-PersonalDbAnswers - is the thing on the SQL port actually Exasol? A real
+# SELECT through the kit's exapump profile when that module is loaded (it is,
+# in the CLI and the installer); without it, a completed TLS handshake
+# (Test-PersonalTlsAnswers). A port that is merely open is never the answer
+# (see Get-PersonalStatus for why) - and under rootless Podman the open port
+# is pasta's, there from the moment the container starts and a minute or more
+# before the database inside it accepts a connection. Twin of
+# personal_db_answers.
 function Test-PersonalDbAnswers {
-    $answer = Invoke-ExakitBounded -FilePath (Get-PersonalCli) -Arguments @("info") -TimeoutSeconds $script:PersonalProbeTimeout
-    return ($null -ne $answer)
+    if ((Get-Command Test-ExakitDbReachable -ErrorAction SilentlyContinue) -and (Get-ExakitManifestValue "components.exapump.profile")) {
+        return [bool](Test-ExakitDbReachable)
+    }
+    return (Test-PersonalTlsAnswers)
+}
+
+# Test-PersonalTlsAnswers - does the database complete a TLS handshake on its
+# port? The one probe that tells a database apart from the process publishing
+# its port: pasta (rootless Podman) and the launcher's own runner accept the
+# TCP connection themselves and reset it when nothing answers behind them,
+# which every SQL client reports as "tls handshake eof" - the launcher's own
+# 27-second first-boot budget ran out on exactly that, and a port-open wait
+# returned the instant the container started. The certificate is self-signed
+# by design, so it is accepted, not validated. Twin of personal_tls_answers.
+function Test-PersonalTlsAnswers {
+    $port = Get-PersonalDbPort
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $async = $client.BeginConnect("127.0.0.1", $port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne(700, $false)) { return $false }
+        $client.EndConnect($async)
+        $ms = $script:PersonalProbeTimeout * 1000
+        $client.ReceiveTimeout = $ms
+        $client.SendTimeout = $ms
+        $accept = [System.Net.Security.RemoteCertificateValidationCallback]{ $true }
+        $ssl = New-Object System.Net.Security.SslStream($client.GetStream(), $false, $accept)
+        try {
+            $ssl.AuthenticateAsClient("localhost")
+            return $true
+        } finally {
+            $ssl.Dispose()
+        }
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
+}
+
+# Get-PersonalForeignDbHint - one sentence for a port that answers like Exasol
+# but is not this kit's deployment; empty when nothing completes a handshake.
+# Windows and WSL share one network stack, so a database deployed on either
+# side holds 8563 for both; naming that spares the reader a hunt for an
+# application that is not there. Twin of personal_foreign_db_hint.
+function Get-PersonalForeignDbHint {
+    if (-not (Test-PersonalTlsAnswers)) { return "" }
+    return " It answers like an Exasol database this kit did not deploy. Windows and WSL share this port, so an Exasol Personal deployed inside WSL holds it here too: stop it there first (in that distro: exakit stop), then re-run."
 }
 
 # Get-PersonalLauncherState - the LAUNCHER'S OWN WORD for this deployment
@@ -167,7 +217,24 @@ function Get-PersonalLauncherState {
 
 function Test-PersonalDeploymentRunning {
     if (-not (Test-ExakitPortInUse (Get-PersonalDbPort))) { return $false }
-    return (Test-PersonalDbAnswers)
+    if (Test-PersonalDeploymentExists) {
+        # THE LAUNCHER'S WORD OUTRANKS THE PORT. "stopped" can leave a runner
+        # answering (see Get-PersonalStatus); "deployment_failed" is a first
+        # boot the launcher gave up on - reconciled by Install-PersonalDeployment,
+        # never adopted as running, or its stop and start stay no-ops for good.
+        $state = Get-PersonalLauncherState
+        if ($state -eq "stopped" -or $state -eq "deployment_failed") { return $false }
+        return (Test-PersonalDbAnswers)
+    }
+    # NO DEPLOYMENT OF OURS. Something answers on the port, but only a SELECT
+    # through the kit's own profile proves it is this kit's database. Windows
+    # and WSL share one network stack, so a database deployed on either side
+    # holds 8563 for both - and adopting the other side's database here handed
+    # the rest of the install a password that could never work against it.
+    if ((Get-Command Test-ExakitDbReachable -ErrorAction SilentlyContinue) -and (Get-ExakitManifestValue "components.exapump.profile")) {
+        return [bool](Test-ExakitDbReachable)
+    }
+    return $false
 }
 
 # Test-PersonalDeploymentWedged - a SIGKILLed runner leaves the launcher's
@@ -257,7 +324,12 @@ function Wait-PersonalReady {
     }
     $t0 = [DateTime]::UtcNow
     while (([DateTime]::UtcNow - $t0).TotalSeconds -lt $budget) {
-        if ((Test-ExakitPortInUse (Get-PersonalDbPort)) -and (Test-PersonalDbAnswers)) {
+        # A HANDSHAKE, NOT AN OPEN PORT. Under rootless Podman the port is
+        # pasta's from the moment the container starts, and `exasol info`
+        # answers from the deployment directory - together they declared
+        # "reachable" a database that was still a minute from accepting a
+        # connection, and the next step's SELECT 1 paid for it six times.
+        if (Test-PersonalTlsAnswers) {
             Ok "Deployment is reachable"
             # The database answered under this launcher, so whatever rebuild that
             # first start owed is paid - recorded so the notice retires itself.
@@ -304,6 +376,23 @@ function Test-PersonalRequirements {
     # step names the one administrator prompt that can appear at the moment it
     # can appear - which is where a reader can act on it. A line at the gate
     # was an announcement about a step that had not started.
+    #
+    # ONE THING ABOUT A MACHINE THAT IS ALREADY THERE, though. Podman Desktop
+    # creates the default machine ROOTFUL, and a rootful container publishes
+    # its port as an iptables rule inside the machine - no listener, so neither
+    # WSL's localhost relay nor gvproxy ever forwards it to Windows. The
+    # launcher then deploys a database that answers inside the machine and
+    # never on 127.0.0.1:8563, and every start waits 150 s for it. A machine
+    # Podman creates itself is rootless and publishes through a real listener,
+    # which the relay forwards. Found by running both on one laptop; refused
+    # here, before anything is downloaded, with the fix named.
+    $podmanCmd = Get-Command podman -ErrorAction SilentlyContinue
+    if ($podmanCmd -and $env:EXAKIT_FORCE -ne "1") {
+        $rootful = ("" + (Invoke-ExakitBounded -FilePath $podmanCmd.Source -Arguments @("machine", "inspect", "--format", "{{.Rootful}}") -TimeoutSeconds 20)).Trim()
+        if ($rootful -eq "true") {
+            Fail "Podman's default machine is rootful, and a database published from a rootful machine is not reachable from Windows (the port is an iptables rule inside the machine, which nothing forwards). Make it rootless first: podman machine stop; podman machine set --rootful=false; podman machine start - or remove it and let the launcher create one (podman machine rm podman-machine-default). Force past this check with EXAKIT_FORCE=1."
+        }
+    }
     Ok "Compatibility check passed (windows $arch, ${ramGb} GB RAM)"
 }
 
@@ -449,6 +538,27 @@ function Install-PersonalDeployment {
     }
 
     if (Test-PersonalDeploymentExists) {
+        # A FIRST BOOT THE LAUNCHER GAVE UP ON is not a stopped deployment. In
+        # "deployment_failed" its start and stop do nothing, so the
+        # start-and-reuse path below would report success over a record that
+        # stays failed - and every later exakit start would wait on nothing.
+        # The launcher's own retry is its deploy; when that gives up on a
+        # first boot again, the kit's budget and reconcile take over. Only a
+        # database that never answers reaches the ladder below.
+        if ((Get-PersonalLauncherState) -eq "deployment_failed") {
+            Info "The launcher records this deployment as failed - retrying its deploy."
+            $deployArgs = @("deploy")
+            $flag = Get-PersonalAutoApproveFlag "deploy"
+            if ($flag) { $deployArgs += $flag }
+            $script:ExakitActiveLabel = "Retrying the deployment"
+            if (((Invoke-ExakitLogged (Get-PersonalCli) @deployArgs) -eq 0) -or (Wait-PersonalSlowFirstBoot)) {
+                Ok "Reusing the existing Exasol deployment (deployed again)"
+                Wait-PersonalReady
+                Set-PersonalManifest "healthy"
+                return
+            }
+            Warn2 "The failed deployment could not be brought up.$(Get-PersonalForeignDbHint)"
+        }
         Info "An Exasol deployment was found, not running."
         if (Confirm-ExakitEnvPrompt "EXAKIT_REUSE_DB" "Start the existing database and keep its data?" $true) {
             Show-PersonalGuestRebuildNote
@@ -480,7 +590,7 @@ function Install-PersonalDeployment {
     }
 
     if (Test-ExakitPortInUse (Get-PersonalDbPort)) {
-        Fail "Port $(Get-PersonalDbPort) is in use by a process that is not a reachable Exasol Personal deployment. Stop that application and re-run (EXAKIT_DB_PORT does not choose the port of a personal deployment)."
+        Fail "Port $(Get-PersonalDbPort) is in use by a process that is not a reachable Exasol Personal deployment.$(Get-PersonalForeignDbHint) Stop that application and re-run (EXAKIT_DB_PORT does not choose the port of a personal deployment)."
     }
 
     Info "Exasol Personal is free to use and ships under Exasol's own licence terms, not the kit's MIT licence. The launcher shows them below."
@@ -491,12 +601,52 @@ function Install-PersonalDeployment {
     if ($flag) { $installArgs += $flag }
     $script:ExakitActiveLabel = "Deploying Exasol Personal locally"
     if ((Invoke-ExakitLogged (Get-PersonalCli) @installArgs) -ne 0) {
-        Fail "Local deployment failed. Re-running the installer retries it safely."
+        # A DEPLOYMENT THAT EXISTS IS GIVEN THE KIT'S OWN BUDGET FIRST: the
+        # launcher waits 27 seconds for a first boot, and a first boot in a
+        # fresh Podman machine takes longer. Twin of the same branch in
+        # personal_deploy_local; see Wait-PersonalSlowFirstBoot.
+        if (-not ((Test-PersonalDeploymentExists) -and (Wait-PersonalSlowFirstBoot))) {
+            Fail "Local deployment failed.$(Get-PersonalForeignDbHint) Re-running the installer retries it safely."
+        }
     }
 
     Wait-PersonalReady
     Ok "Exasol Personal deployed and answering on 127.0.0.1:$(Get-PersonalDbPort)"
     Set-PersonalManifest "healthy"
+}
+
+# The launcher gave up on a first boot that was merely slow: wait with the kit's
+# budget and reconcile the launcher's record with its own `deploy` retry. When
+# the launcher records deployment_failed, its stop and start do nothing, so a
+# database that came up ten seconds too late read as a failed install and every
+# later `exakit start` waited 150 s for nothing. $false only when the database
+# never answered. Twin of personal_recover_slow_first_boot.
+function Wait-PersonalSlowFirstBoot {
+    $budget = 150
+    if ($env:EXAKIT_PERSONAL_READY_TIMEOUT) { $budget = [int]$env:EXAKIT_PERSONAL_READY_TIMEOUT }
+    Info "The launcher stopped waiting after its own short budget, but the deployment exists - waiting up to ${budget}s for the database"
+    $t0 = [DateTime]::UtcNow
+    while (-not (Test-PersonalTlsAnswers)) {
+        if (([DateTime]::UtcNow - $t0).TotalSeconds -ge $budget) { return $false }
+        Start-Sleep -Seconds 5
+    }
+    Ok "The database answered after $([int]([DateTime]::UtcNow - $t0).TotalSeconds)s"
+    # THE RECONCILE IS THE OWNERSHIP PROOF. A handshake says a database answers
+    # on the port, not whose: with Windows and WSL sharing one network stack it
+    # may be the other side's. The launcher's deploy connects with this
+    # deployment's own credentials, so its success is the one signal that the
+    # database that answered is this one - and its failure is a failure, not a
+    # database "the kit can reach".
+    $deployArgs = @("deploy")
+    $flag = Get-PersonalAutoApproveFlag "deploy"
+    if ($flag) { $deployArgs += $flag }
+    $script:ExakitActiveLabel = "Reconciling the launcher's record"
+    if ((Invoke-ExakitLogged (Get-PersonalCli) @deployArgs) -eq 0) {
+        Ok "The launcher's record agrees with the running database"
+        return $true
+    }
+    Warn2 "The launcher still records this deployment as failed although something answers on port $(Get-PersonalDbPort).$(Get-PersonalForeignDbHint)"
+    return $false
 }
 
 # Start-Personal / Stop-Personal - launcher start/stop with the same say-what-
@@ -507,6 +657,21 @@ function Start-Personal {
         Info "This launcher version has no explicit start command."
         Info "Check the database with: $(Get-PersonalCli) info"
         return
+    }
+    # In "deployment_failed" the launcher's start (and stop) do nothing and
+    # exit 0, so this reported "Database started" over a database that was
+    # never asked to start and then waited its whole budget for it. The
+    # launcher's own retry for that state is its deploy.
+    if ((Get-PersonalLauncherState) -eq "deployment_failed") {
+        Info "The launcher records this deployment as failed - retrying its deploy instead of a start it would ignore."
+        $deployArgs = @("deploy")
+        $flag = Get-PersonalAutoApproveFlag "deploy"
+        if ($flag) { $deployArgs += $flag }
+        if ((Invoke-ExakitLogged (Get-PersonalCli) @deployArgs) -eq 0) {
+            Ok "Database started"
+            return
+        }
+        Fail "The deployment could not be brought up.$(Get-PersonalForeignDbHint) Check the log; if it fails the same way, repair with: exakit repair-runtime"
     }
     Show-PersonalGuestRebuildNote
     $startArgs = @("start")

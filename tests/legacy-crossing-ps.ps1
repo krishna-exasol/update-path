@@ -462,12 +462,16 @@ Has "the banner counts every table" "It holds 3 table(s)" $s
 Has "...says which belong to the kit" "1 of them belong to the kit's bundled sample data (tpch)" $s
 Has "...and how many are the user's own" "Your own: 2 table(s)" $s
 Check "only the user's tables are copied out" 2 @((Calls "exapump") | Where-Object { $_ -like "export *" }).Count
-Check "the unchanged sample table is not" 0 @((Calls "exapump") | Where-Object { $_ -like "export *" -and $_ -like "*TPCH.REGION*" }).Count
-Check "a sample table the user changed is" 1 @((Calls "exapump") | Where-Object { $_ -like "export *" -and $_ -like "*TPCH.NATION*" }).Count
+# The export names its table as a quoted query, so that is what the log holds.
+Check "the unchanged sample table is not" 0 @((Calls "exapump") | Where-Object { $_ -like "export *" -and $_ -like '*"TPCH"."REGION"*' }).Count
+Check "a sample table the user changed is" 1 @((Calls "exapump") | Where-Object { $_ -like "export *" -and $_ -like '*"TPCH"."NATION"*' }).Count
 Check "the row counts were asked for once, for the sample schema" 1 @((Calls "exapump") | Where-Object { $_ -like "*EXAKIT_LR*" -and $_ -like "*IN ('TPCH')*" }).Count
 Check "the record names the dataset left out" "tpch" (MGet "legacy.sample_left_out")
 Check "the crossing remembers the old database" "exasol-nano/fakeengine/127.0.0.1:8563/sys" ((MGet "legacy.container") + "/" + (MGet "legacy.engine") + "/" + (MGet "legacy.dsn") + "/" + (MGet "legacy.user"))
 Check "...and its volume" "exasol-nano-data" (MGet "legacy.volume")
+# The old kit's "runtime" tick was the container: kept, the deployment step was
+# skipped as done and nothing recorded the new runtime (seen on a real machine).
+Check "the old kit's step ticks are dropped" 0 @(Get-ExakitManifestValue "steps_completed").Count
 Remember
 Seed; $env:EXAKIT_LEGACY_DATA = "migrate"
 Set-Content -Path (Join-Path $env:EXAKIT_FAULT_DIR "db.tables") -Value "TPCH.REGION`nTPCH.NATION"
@@ -482,7 +486,7 @@ Remember
 Seed; $env:EXAKIT_LEGACY_DATA = "migrate"
 Set-Content -Path (Join-Path $env:EXAKIT_FAULT_DIR "db.tables") -Value "TPCH.REGION"
 $s = Screen { Invoke-LegacyCrossingBefore }
-Check "an unknown row count keeps the table in the copy" 1 @((Calls "exapump") | Where-Object { $_ -like "export *" -and $_ -like "*TPCH.REGION*" }).Count
+Check "an unknown row count keeps the table in the copy" 1 @((Calls "exapump") | Where-Object { $_ -like "export *" -and $_ -like '*"TPCH"."REGION"*' }).Count
 Lacks "...and nothing is called the kit's" "bundled sample data" $s
 Remember
 Seed; $env:EXAKIT_LEGACY_DATA = "skip"
@@ -617,6 +621,16 @@ $s = Migrate
 Check "a container that will not start fails" 1 $script:migRc
 Has "...pointing at its logs" "fakeengine logs exasol-nano" $s
 Check "...and the deployment is started again" "stop start" (PersonalCalls)
+# A PORT STILL HELD AFTER THE STOP: named for what it is, the deployment
+# started again, the container never blamed.
+SeedMig; Fault "personal.port_busy" "1"
+$s = Migrate
+Check "a port still held after the stop fails" 1 $script:migRc
+Has "...naming the port" "port 8563 is still held" $s
+Lacks "...and not the container" "would not start" $s
+Check "...and the deployment is started again" "stop start" (PersonalCalls)
+Check "...with the container never started" 0 @((Calls "engine") | Where-Object { $_ -like "start *" }).Count
+Remember
 SeedMig; Fault "personal.stop_rc" "1"
 $s = Migrate
 Check "a deployment that will not stop fails first" 1 $script:migRc
@@ -677,6 +691,17 @@ Check "three restored now" "3" (MGet "legacy.restored")
 Check "no second export" 3 @((Calls "exapump") | Where-Object { $_ -like "export *" }).Count
 Remember
 
+# THE NEW DATABASE DOES NOT ANSWER at restore time: nothing is counted, the
+# copy is kept, the record does not say restored.
+SeedMig; Fault "newdb.answers" "no"
+$s = Migrate
+Check "an unreachable new database fails the restore" 1 $script:migRc
+Has "...keeping the copy" "could not be restored. The copy is kept" $s
+Lacks "...and nothing is called left alone" "Left alone" $s
+Check "...no upload was attempted" 0 @((Calls "exapump") | Where-Object { $_ -like "upload *" }).Count
+Check "...and the record does not say restored" "" (MGet "legacy.restored")
+Remember
+
 # A SECOND, FRESH COPY after a complete one clears the spent files first.
 SeedMig
 [void](Migrate)
@@ -699,7 +724,9 @@ Check "only inspect, start and stop were issued" "" (@($script:allEngine | ForEa
 Check "the password never reached the screen" 0 @($script:screens | Where-Object { $_.Contains($PASSWORD) }).Count
 Check "...nor any process the crossing ran" 0 @(($script:allEngine + $script:allExapump) | Where-Object { $_.Contains($PASSWORD) }).Count
 Check "...and it did land in the sandboxed profile" $true ((Get-Content $cfg -Raw).Contains($PASSWORD))
-Check "no read of the old database used the kit's profile" 0 @($script:allExapump | Where-Object { $_ -match '^(export|sql) -p starter-kit ' -and $_ -notmatch 'CREATE|upload' }).Count
+# The one SELECT the kit's profile does carry is the probe of the NEW database
+# before a restore (EXAKIT_NEW_OK) - a read of the new one, by design.
+Check "no read of the old database used the kit's profile" 0 @($script:allExapump | Where-Object { $_ -match '^(export|sql) -p starter-kit ' -and $_ -notmatch 'CREATE|upload|EXAKIT_NEW_OK' }).Count
 Check "no upload used the legacy profile" 0 @($script:allExapump | Where-Object { $_ -like "upload -p starter-kit-legacy *" }).Count
 
 # --- coverage ------------------------------------------------------------------

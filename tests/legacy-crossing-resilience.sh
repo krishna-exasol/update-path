@@ -652,8 +652,9 @@ has "the banner counts every table"          "It holds 3 table(s)" "$_o"
 has "...says which belong to the kit"        "1 of them belong to the kit's bundled sample data (tpch)" "$_o"
 has "...and how many are the user's own"     "Your own: 2 table(s)" "$_o"
 check "only the user's tables are copied out"        "2" "$(calls "$H" exapump | grep -c '^export')"
-check "the unchanged sample table is not"            "0" "$(calls "$H" exapump | grep '^export' | grep -c 'TPCH.REGION')"
-check "a sample table the user changed is"           "1" "$(calls "$H" exapump | grep '^export' | grep -c 'TPCH.NATION')"
+# The export names its table as a quoted query, so that is what the log holds.
+check "the unchanged sample table is not"            "0" "$(calls "$H" exapump | grep '^export' | grep -c '"TPCH"."REGION"')"
+check "a sample table the user changed is"           "1" "$(calls "$H" exapump | grep '^export' | grep -c '"TPCH"."NATION"')"
 check "the row counts were asked for once"           "1" "$(calls "$H" exapump | grep -c 'EXAKIT_LR')"
 check "...for the sample schema only"                "1" "$(calls "$H" exapump | grep 'EXAKIT_LR' | grep -c "IN ('TPCH')")"
 check "...through the legacy profile"                "1" "$(calls "$H" exapump | grep 'EXAKIT_LR' | grep -c -- '-p starter-kit-legacy')"
@@ -664,6 +665,9 @@ check "the crossing remembers the old database"      "exasol-nano/fakeengine/127
     "$(mget "$H" legacy.container)/$(mget "$H" legacy.engine)/$(mget "$H" legacy.dsn)/$(mget "$H" legacy.user)"
 check "...and its volume and password file"          "exasol-nano-data/$H/credentials/nano_sys_password" \
     "$(mget "$H" legacy.volume)/$(mget "$H" legacy.password_file)"
+# The old kit's "runtime" tick was the container. Kept, the deployment step
+# was skipped as done and nothing recorded the new runtime (a real machine).
+check "the old kit's step ticks are dropped"          "[]" "$(mget "$H" steps_completed | tr -d ' ')"
 
 # Nothing but the sample: nothing of the user's, so nothing is asked - the same
 # silence as an empty database, with the reason settled in the record.
@@ -682,7 +686,7 @@ check "...and the container stopped for the port"    "1" "$(calls "$H" engine | 
 H="$WORK/sample-unknown"; seed "$H"
 printf 'TPCH.REGION\n' > "$H/ctrl/db.tables"
 _o="$(before "$H" EXAKIT_LEGACY_DATA=migrate)"; note_rc "$_o"
-check "an unknown row count keeps the table in the copy" "1" "$(calls "$H" exapump | grep '^export' | grep -c 'TPCH.REGION')"
+check "an unknown row count keeps the table in the copy" "1" "$(calls "$H" exapump | grep '^export' | grep -c '"TPCH"."REGION"')"
 lacks "...and nothing is called the kit's"           "bundled sample data" "$_o"
 
 # The skip road now names the later route.
@@ -813,6 +817,22 @@ check "a container that will not start fails"            "1" "$(rc_of "$_o")"
 has "...pointing at its logs"                             "fakeengine logs exasol-nano" "$_o"
 check "...and the deployment is started again"           "stop start" "$(personal_calls "$H")"
 
+# A PORT STILL HELD AFTER THE STOP (seen for real: the launcher's forwarder
+# outlived its "stopped"). The kit's own reaper is tried; a port it cannot
+# free is named for what it is, the deployment is started again, and the
+# container is never blamed.
+H="$WORK/mig-portheld"; seed_mig "$H"; fault "$H" personal.port_busy 1
+_o="$(migrate "$H")"
+check "a port still held after the stop fails"          "1" "$(rc_of "$_o")"
+has "...naming the port and its holder"                  "port 8563 is still held (pid 4242: something-else)" "$_o"
+lacks "...and not the container"                         "would not start" "$_o"
+check "...the reaper was tried, the deployment restarted" "stop reap start" "$(personal_calls "$H")"
+check "...and the container was never started"           "0" "$(calls "$H" engine | grep -c '^start ')"
+H="$WORK/mig-portreaped"; seed_mig "$H"; fault "$H" personal.port_busy 1; fault "$H" personal.reap_frees 1
+_o="$(migrate "$H")"
+check "a port the reaper frees lets the copy go on"      "0" "$(rc_of "$_o")"
+check "...stop, reap, then the copy, then the restart"   "stop reap start wait" "$(personal_calls "$H")"
+
 # A DEPLOYMENT THAT WILL NOT STOP: nothing else is attempted.
 H="$WORK/mig-nostop"; seed_mig "$H"; fault "$H" personal.stop_rc 1
 _o="$(migrate "$H")"
@@ -844,7 +864,7 @@ _o="$(migrate "$H")"
 has "the count names the whole container"                 "The container holds 3 table(s)" "$_o"
 has "...and the kit's share"                              "1 of them belong to the kit's bundled sample data (tpch)" "$_o"
 check "two copied out"                                    "2" "$(mget "$H" legacy.exported)"
-check "the changed sample table among them"               "1" "$(calls "$H" exapump | grep '^export' | grep -c 'TPCH.NATION')"
+check "the changed sample table among them"               "1" "$(calls "$H" exapump | grep '^export' | grep -c '"TPCH"."NATION"')"
 
 # EVERY EXPORT FAILS: the deployment comes back, nothing is lost.
 H="$WORK/mig-exportfail"; seed_mig "$H"; printf 'S1.T1\nS1.T2\nS2.T3\n' > "$H/ctrl/export.fail"
@@ -881,6 +901,26 @@ has "...with the pointer to a fresh run"                  "Run the command again
 check "three restored now"                                "3" "$(mget "$H" legacy.restored)"
 check "no second export"                                  "3" "$(calls "$H" exapump | grep -c '^export')"
 check "the deployment was not stopped again"              "stop start" "$(personal_calls "$H")"
+
+# THE NEW DATABASE DOES NOT ANSWER at restore time: nothing is counted, the
+# copy is kept, and the record does not say restored. (On a real machine every
+# CREATE TABLE failed on authentication and read as "already there".)
+H="$WORK/mig-newdb-silent"; seed_mig "$H"; fault "$H" newdb.answers no
+_o="$(migrate "$H")"
+check "an unreachable new database fails the restore"     "1" "$(rc_of "$_o")"
+has "...keeping the copy"                                 "could not be restored. The copy is kept" "$_o"
+lacks "...and nothing is called left alone"               "Left alone" "$_o"
+check "...no upload was attempted"                        "0" "$(calls "$H" exapump | grep -c '^upload')"
+check "...and the record does not say restored"           "" "$(mget "$H" legacy.restored)"
+# The install's own second half, same fault: the copy waits for the next run.
+H="$WORK/after-newdb-silent"; seed "$H"; fault "$H" newdb.answers no
+_o="$(before "$H" EXAKIT_LEGACY_DATA=migrate)"; note_rc "$_o"
+_o2="$(after "$H")"
+has "the install's restore says the copy is kept"         "could not be restored. The copy is kept" "$_o2"
+check "...and leaves the restore unrecorded for a re-run" "" "$(mget "$H" legacy.restored)"
+fault "$H" newdb.answers yes
+_o3="$(after "$H")"
+has "...which then restores it"                           "Restored 3 table(s)" "$_o3"
 
 # A SECOND, FRESH COPY after a complete one clears the spent files first.
 H="$WORK/mig-twice"; seed_mig "$H"
@@ -931,8 +971,10 @@ for _m in "$WORK"/*/manifest.json; do python3 -c 'import json,sys; json.load(ope
 check "every manifest is still valid JSON" "" "$_bad_json"
 # THE TWO PROFILES NEVER CROSS. Reads of the old database go through the
 # legacy profile; writes into the new one go through the kit's.
+# The one SELECT the kit's profile does carry is the probe of the NEW database
+# before a restore (EXAKIT_NEW_OK) - a read of the new one, by design.
 check "no read of the old database used the kit's profile" "0" \
-    "$(printf '%s\n' "$_all_exapump" | grep -E '^(export|sql -p [^ ]+ SELECT)' | grep -c -- '-p starter-kit ')"
+    "$(printf '%s\n' "$_all_exapump" | grep -E '^(export|sql -p [^ ]+ SELECT)' | grep -v EXAKIT_NEW_OK | grep -c -- '-p starter-kit ')"
 check "no upload used the legacy profile" "0" "$(printf '%s\n' "$_all_exapump" | grep '^upload' | grep -c -- 'starter-kit-legacy')"
 check "no parquet was ever asked for" "0" "$(printf '%s\n' "$_all_exapump" | grep -c parquet)"
 

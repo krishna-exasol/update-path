@@ -112,6 +112,95 @@ engine, no password, a silent database, a container that will not start, a
 deployment that will not stop or does not come back, only sample data, every
 export failing, a partial restore, a waiting copy, a second fresh copy.
 
+**A first boot the launcher gave up on is no longer a failed install.** The
+launcher waits 27 seconds for the database on `install local`, and a first boot
+in a fresh Podman machine takes 40 to 60; it then records `deployment_failed`,
+a state in which its own `stop` and `start` do nothing - so a database that came
+up ten seconds too late was reported as "Local deployment failed", and every
+later `exakit start` waited the full 150 s for a port the launcher would never
+bring back. Seen four times in one day, on WSL and on Windows. When the deploy
+command fails but the deployment exists, both halves now wait with the kit's
+own budget, and when the database answers they run the launcher's own `deploy`
+retry so its record agrees.
+
+**"Answering" means a completed TLS handshake, never an open port.** Under
+rootless Podman the published port is pasta's from the moment the container
+starts: it accepts the TCP connection itself and resets it while the database
+behind it is still booting, which every client reports as `tls handshake eof`
+- the launcher's own 27-second budget ran out on exactly that, and the kit's
+port-open waits returned the instant the container started, declared the
+deployment "reachable" and let the next step's `SELECT 1` fail six times. Both
+halves now probe with a handshake (`openssl s_client` or python3's `ssl` on the
+sh side, `SslStream` on Windows; the self-signed certificate is accepted, not
+validated) in `personal_wait_ready`, the slow-first-boot recovery and the
+adoption check. The launcher's `deploy` retry is the ownership proof: when it
+fails after something answered, the recovery fails too, instead of carrying on
+with "the database it can reach".
+
+**A database the launcher does not own is never adopted.** Windows and WSL
+share one network stack, so an Exasol Personal deployed on either side holds
+port 8563 for both. The Windows installer saw "already running on 8563",
+adopted the WSL database, wrote a profile with its own launcher's password and
+watched exapump and pyexasol fail against it. Now: with a deployment of its
+own, the launcher's word outranks the port (`stopped` and `deployment_failed`
+are not running); with none, only a `SELECT 1` through the kit's own profile
+counts. A port that answers like Exasol but is not ours is named for what it
+is, with the WSL/Windows explanation and the remedy (stop it on the other side
+first). New suite: `tests/personal-readiness.sh`; the PowerShell twin's checks
+join `tests/runtime-personal-ps.ps1`.
+
+**A deployment the launcher records as failed is deployed again, not
+"started".** In `deployment_failed` the launcher's `start` and `stop` exit 0
+doing nothing, so the installer's reuse path reported "started" over a record
+that stayed failed, and `exakit start` said "Database started" and then waited
+its whole budget. Both now run the launcher's `deploy` retry for that state,
+then the kit's slow-first-boot budget and reconcile; only a database that
+never answers reaches the replace question.
+
+**Windows refuses a rootful default Podman machine before downloading
+anything.** Podman Desktop creates the default machine rootful, and a rootful
+container publishes its port as an iptables rule inside the machine - no
+listener, so neither WSL's localhost relay nor gvproxy forwards it to Windows.
+The launcher then deploys a database that answers inside the machine and never
+on 127.0.0.1:8563. Measured on one laptop: a plain listener in the machine is
+forwarded, a rootful published port is not, a rootless one is. The requirements
+gate names the fix (`podman machine set --rootful=false`, or remove the machine
+and let the launcher create one); `EXAKIT_FORCE=1` steps past it.
+
+**`exakit repair-runtime` reloads the sample data it promises to.** The record's
+"loaded" flags survived the rebuild, and the data step trusts the record
+whenever the database cannot be asked - which a database that came up seconds
+ago sometimes cannot - so a run said "Dataset 'tpch' already loaded" over an
+empty schema. The flags are reset before the rebuild, on both halves. Found
+behind it: `manifest_set_many` had never written anything, because
+`run_python -` takes the program from stdin and the script's own stdin read came
+back empty - every piped key was dropped, including the dataset-flag healing in
+`exakit_verified_datasets`. It reads its lines before Python now.
+
+**Exasol Personal is pinned to 2.3.0-rc3** (was rc2): the Windows path in rc3 selects and
+keeps a concrete database port and no longer changes an existing Podman
+machine. versions.json and both built-in fallbacks move together, as the
+comment on the fallback requires.
+
+**Two crossing defects found by running it on a real WSL machine, fixed.**
+**(1)** The old kit's manifest carries its own step ticks — `steps_completed:
+["runtime"]` meant the container. The new kit trusted the tick, skipped the
+deployment step as already done, never recorded the Personal runtime, and every
+later step then spoke to the new database with the old container's password
+(`SELECT 1 failed via profile 'starter-kit'`). The crossing now drops the old
+kit's ticks while the record still names the container, so every step of this
+kit runs. **(2)** The export named each table with exapump's bare `--table
+S.T`, and a schema or table that needs quoting (`"My Schema"."Sales 2025"`,
+legal in Exasol) never resolved: the export sat for its full 300 s timeout and
+the table was reported as left behind. It is named as a query with both
+identifiers quoted now — the way the restore has always named its target.
+**(3)** The restore read a failed `CREATE TABLE` as "the fresh install already
+created it" — and with the profile above pointing at the wrong password, every
+one failed on authentication, so a database the kit could not reach reported
+"Restored 0 table(s), Left alone: <every table>" and recorded the restore as
+done. The restore now asks the new database to answer first; when it cannot,
+the copy is kept, said so, and left for the next run to land.
+
 - **A kit installed before this change cannot self-update past it.** The
   payload validator in every older copy requires `setup/lib/runtime-nano.sh`,
   which no longer ships, so its `exakit update` refuses the new archive and
