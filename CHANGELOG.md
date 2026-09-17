@@ -157,6 +157,109 @@ its whole budget. Both now run the launcher's `deploy` retry for that state,
 then the kit's slow-first-boot budget and reconcile; only a database that
 never answers reaches the replace question.
 
+**An import connection cut mid-transfer is tried again, quietly.** The
+database reads each data file through its own import proxy; when the client
+side of that connection closes before the last byte, the engine reports
+`ETL-5105 ... transfer closed with outstanding read data remaining`. On
+Windows with exapump 0.12 that hit one or two of eight tpch files per run, a
+different file each time, and the same file loaded fine a moment later (the
+network path was measured sound: 34 of 34 15 MB uploads through pasta, alone
+and eight in parallel). Both halves now retry a cut-short upload up to two
+more times, one file at a time (`EXAKIT_UPLOAD_RETRIES`, `0` disables); the
+log keeps every attempt, the screen only the outcome. A malformed file, a
+missing table or a refused login is never retried.
+
+**A dataset whose tables are empty is not "loaded".** A dataset's DDL creates
+its tables before a single file is uploaded, so an upload that failed left
+empty tables that the marker check counted as loaded - `exakit data-load`
+answered "already loaded - nothing to do" over `ORDERS` and `PART` with 0
+rows. The table listing behind the check now asks for tables with rows
+(`TABLE_ROW_COUNT > 0`, exact in `EXA_ALL_TABLES`), with a sentinel row so an
+answered-but-empty database is not mistaken for one that could not be asked.
+
+**A kit-managed exapump of another version is replaced, not "already
+installed".** Both halves trusted any binary that answered `--version`, then
+recorded the version the kit pins: 0.13.0 in the manifest, 0.12.0 on disk. The
+version is compared now; only the kit's own path is replaced, a binary the user
+put elsewhere is left alone.
+
+**The crossing finds the container in whichever engine actually holds it.** The
+old kit ran the database under Docker when it was there and Podman otherwise,
+and wrote whichever it used into `runtime.engine`. A record without that key,
+or a machine where the user has since moved from one engine to the other, had
+the whole crossing declined - "the container engine this database needs is not
+on this machine any more" - while the container sat in the other engine, and
+the install then walked straight into the port it holds and stopped there. The
+recorded engine is still preferred and still costs nothing when it works; only
+when it cannot be run does the kit ask each engine on the machine whether it
+has that container, Docker first. The record and every message then name the
+engine actually in use.
+
+**Your own tables come back before the kit's sample data, and the copy has a
+progress bar.** The restore used to run last, after every step of the install,
+which put a user's own tables at the end of a run that is mostly about them; it
+now runs where it first can - a database that is up, an exapump binary and a
+profile pointing at the new database - immediately before the sample-data
+offer. A table a bundled dataset would create is left in the copy rather than
+restored, so the load that follows cannot overwrite it; that was already the
+outcome when the restore ran second, and it no longer depends on the order.
+Both the copy out and the copy back in now draw the same bar the deploy and the
+dataset loads use, naming the table and its position, instead of a spinner that
+only said "still going".
+
+**The question before it is one line.** Six lines of explanation stood between
+finding an old database and asking about it: what the kit no longer manages,
+what it deploys instead, what the copy costs, which tables are the kit's own,
+and a caveat about empty strings. What is left names the container, its state
+and how much of the user's own data is in there. The caveat is said with the
+copy, where it is about to matter.
+
+**A crossing that could not ask is no longer a crossing that was answered.**
+When the offer could not be made, the kit wrote `legacy.choice = skip` and
+closed the crossing for good - even when the reason was a condition rather than
+a decision. One run that could not see the container engine therefore cost that
+machine its data permanently: no later run ever offered again, and because the
+already-done path did not stop the container either, every later install died
+at the database step on the port it holds, with no way forward but stopping it
+by hand. Now: "there is nothing to copy" (the container is gone, the database
+is empty, it holds only unchanged sample data) still settles it forever, while
+"this machine cannot read it right now" (no engine, no exapump yet, the
+container would not start, the database did not answer, no password on file)
+records the reason and leaves the question open for the next run. And the
+container is stopped on every one of those paths, including the already-done
+one, because it holds the port the new deployment needs.
+
+**A port held by your own previous kit says so.** The hint on a busy 8563 named
+WSL whatever was really there, which sent a Windows user with a local container
+looking for a database in a distro that did not have one. When the port is held
+by the recorded container, the message names it, the command that stops it, and
+the fact that re-running the installer then offers to copy its data across.
+
+**A freshly installed exapump that the machine will not let run yet is waited
+for, not blamed on the database.** Windows Defender and corporate endpoint
+agents hold a newly written, unsigned 20 MB executable open while they scan it,
+and every attempt to start it meanwhile fails with `Access is denied`. Measured
+on a managed laptop: three and a half minutes, in which all six `SELECT 1`
+attempts failed and the install reported `SELECT 1 failed via profile
+'starter-kit'` - against a database that was healthy throughout, so the data
+menu, the MCP database check and pyexasol all fell over behind it. The
+PowerShell half now smoke-tests the binary right after installing it, the twin
+of `exapump_verify_runs`, which the sh half has always had and this one never
+did; both wait out that one error (`EXAKIT_EXAPUMP_READY_TIMEOUT`, default
+180s) and then say what is really holding it. A binary that is broken rather
+than locked still fails in the same second it always did.
+
+**A broken exapump can no longer report a healthy database as down.** The
+liveness probe asked exapump for a `SELECT`, so the run above also printed
+"Self-heal: the database is deployed but not running" about a database that was
+up. Whether our own deployment answers is a TLS handshake; proving *whose*
+database answers on a shared port stays where that question arises.
+
+**One failure, one telling (Windows).** A dataset that did not load printed its
+reason three times - the `x` line with the log path, a `!` repeat, and the
+closing `x` with the retry command. The repeats go to the log; the screen keeps
+the first line and a short closing one naming the retry command.
+
 **Windows refuses a rootful default Podman machine before downloading
 anything.** Podman Desktop creates the default machine rootful, and a rootful
 container publishes its port as an iptables rule inside the machine - no

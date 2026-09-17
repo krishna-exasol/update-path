@@ -130,6 +130,11 @@ run() {
 }
 before() { run "$1" "${2:-}" 'legacy_crossing_before; echo "RC=$?"'; }    # the first half, with its exit code
 after()  { run "$1" "${2:-}" 'legacy_crossing_after; echo "RC=$?"'; }     # the second half
+# flat <output> - one line, single-spaced. The banner is a sentence and the UI
+# wraps it to the terminal width, so a phrase asserted whole can fall across the
+# fold; this is what the reader sees, with the fold taken out.
+flat() { printf '%s' "$1" | tr '\n' ' ' | tr -s ' '; }
+
 rc_of()  { printf '%s\n' "$1" | sed -n 's/^RC=\([0-9]*\)$/\1/p' | tail -1; }
 quiet()  { printf '%s\n' "$1" | grep -v '^RC=' | tr -d '[:space:]'; }     # everything but the exit code
 # mget <home> <dotted.key> — the record, printed as manifest_get prints it
@@ -173,12 +178,17 @@ check "...saying nothing on screen" "" "$(quiet "$_o")"
 check "...and settling the question for good" "true" "$(mget "$H" legacy.crossing_done)"
 
 # A stopped container that will not start: there is data in there, and no way
-# to read it. Silent skip, marked done, and the engine was asked exactly once.
+# to read it TODAY. A container that refuses to start this morning starts this
+# afternoon, so this is a condition, not a decision - nothing is recorded as
+# chosen and the crossing stays open for the next run. The engine is still
+# asked exactly once.
 H="$WORK/nostart"; seed "$H"; fault "$H" engine.state stopped; fault "$H" engine.start_rc 1
 _o="$(before "$H")"; note_rc "$_o"
 check "a container that will not start is not an error" "0" "$(rc_of "$_o")"
 check "...nothing reaches the screen" "" "$(quiet "$_o")"
-check "...the choice falls to skip" "skip" "$(mget "$H" legacy.choice)"
+check "...no choice is recorded for the user" "" "$(mget "$H" legacy.choice)"
+check "...the crossing stays open" "" "$(mget "$H" legacy.crossing_done)"
+has   "...and the reason is kept" "would not start" "$(mget "$H" legacy.offer_blocked)"
 check "start was attempted once" "1" "$(calls "$H" engine | grep -c '^start ')"
 lacks "and no export was tried" "export" "$(calls "$H" exapump)"
 
@@ -222,7 +232,7 @@ check "...the removal command has nothing to name and says so" "1" \
 # for what it is.
 H="$WORK/unknown"; seed "$H"; fault "$H" engine.state unknown
 _o="$(before "$H" EXAKIT_LEGACY_DATA=skip)"; note_rc "$_o"
-has "an unparseable state still leads to the offer" "runs in a container" "$_o"
+has "an unparseable state still leads to the offer" "Found your previous starter kit" "$_o"
 has "...and the banner shows the state honestly" "(unknown)" "$_o"
 
 # An engine that refuses `inspect -f` but answers a plain `inspect` (too old
@@ -249,7 +259,10 @@ echo "the old database misbehaves:"
 H="$WORK/nopw"; SEED_NO_PASSWORD=1 seed "$H"
 _o="$(before "$H")"; note_rc "$_o"
 check "no password file: silent skip" "" "$(quiet "$_o")"
-check "...marked done" "true" "$(mget "$H" legacy.crossing_done)"
+# A password that is not on file today can be put there tomorrow, so the
+# question is left open rather than answered on the user's behalf.
+check "...the crossing stays open" "" "$(mget "$H" legacy.crossing_done)"
+has   "...with the reason kept" "not on file" "$(mget "$H" legacy.offer_blocked)"
 lacks "...and the database was never queried" "EXAKIT_LEGACY_OK" "$(calls "$H" exapump)"
 check "...and the container is still stopped, because it holds the port" "1" "$(calls "$H" engine | grep -c '^stop ')"
 
@@ -298,11 +311,14 @@ check "...but is marked done" "true" "$(mget "$H" legacy.crossing_done)"
 check "...and stopped, for the port" "1" "$(calls "$H" engine | grep -c '^stop ')"
 
 # exapump is not there to read the tables out. The gate closes before the
-# database is touched at all.
+# database is touched at all - but exapump arrives two steps later in this very
+# install, so the question is left open for the next run rather than answered
+# on the user's behalf.
 H="$WORK/noexapump"; seed "$H"
 _o="$(NO_EXAPUMP=1 before "$H")"; note_rc "$_o"
 check "no exapump: silent skip" "" "$(quiet "$_o")"
-check "...done" "true" "$(mget "$H" legacy.crossing_done)"
+check "...the crossing stays open" "" "$(mget "$H" legacy.crossing_done)"
+has   "...with the reason kept" "exapump is not installed yet" "$(mget "$H" legacy.offer_blocked)"
 check "...no query was attempted" "" "$(calls "$H" exapump)"
 
 # =============================================================================
@@ -505,14 +521,18 @@ _o3="$(after "$H")"
 has "and the second half restores the first half's copy" "Restored 3 table(s)" "$_o3"
 
 # The run died AFTER crossing_done but before the deployment recorded itself
-# as personal - the record still says nano. Gate 2 closes before any probe:
-# zero engine calls, zero exapump calls, nothing on screen.
+# as personal - the record still says nano. The question is not asked again and
+# the database is never touched; the CONTAINER, though, still holds the port the
+# new deployment needs, and leaving it alone there is what made every later
+# install die at the database step with no way forward but a docker stop by
+# hand. So: nothing on screen, no database call, and the port freed.
 H="$WORK/done-still-nano"; seed "$H"
 run "$H" "" 'manifest_set legacy.crossing_done true' >/dev/null
 _o="$(before "$H")"; note_rc "$_o"
 check "a crossing already done is never reconsidered" "" "$(quiet "$_o")"
-check "...and costs no engine call" "" "$(calls "$H" engine)"
 check "...and no database call" "" "$(calls "$H" exapump)"
+check "...but the port is freed anyway" "1" "$(calls "$H" engine | grep -c '^stop ')"
+check "...and no question is asked" "" "$(mget "$H" legacy.offer_blocked)"
 
 # The normal post-crossing state: the deployment recorded itself as personal.
 # Gate 1 closes; the machine is simply a Personal install now.
@@ -532,7 +552,12 @@ echo "the whole road, end to end:"
 H="$WORK/e2e-migrate"; seed "$H"
 _o="$(before "$H" EXAKIT_LEGACY_DATA=migrate)"; note_rc "$_o"
 has "the banner names the container and its state" "container 'exasol-nano' (running)" "$_o"
-has "...the table count" "It holds 3 table(s)" "$_o"
+# ONE LINE, NOT SIX: the name, the state, and how much of the user's own data
+# is in there. What it no longer says before the question - what the kit does
+# not manage, what it deploys instead, what the copy costs, and the caveat
+# about empty strings - is either in the docs or said with the copy itself.
+has "...and how much of it is the user's own" "3 table(s) in 2 schema(s) of your own" "$(flat "$_o")"
+lacks "...without the paragraph that used to precede it" "runs in a container" "$_o"
 has "...and the one caveat CSV carries" "empty string arrives as NULL" "$_o"
 check "choice" "migrate" "$(mget "$H" legacy.choice)"
 check "crossed_from" "nano" "$(mget "$H" legacy.crossed_from)"
@@ -648,9 +673,10 @@ H="$WORK/sample"; seed "$H"
 printf 'S1.T1\nTPCH.NATION\nTPCH.REGION\n' > "$H/ctrl/db.tables"
 printf 'TPCH.NATION|24\nTPCH.REGION|5\n' > "$H/ctrl/db.rows"
 _o="$(before "$H" EXAKIT_LEGACY_DATA=migrate)"; note_rc "$_o"
-has "the banner counts every table"          "It holds 3 table(s)" "$_o"
-has "...says which belong to the kit"        "1 of them belong to the kit's bundled sample data (tpch)" "$_o"
-has "...and how many are the user's own"     "Your own: 2 table(s)" "$_o"
+has "the banner counts the user's own tables" "2 table(s) in 2 schema(s) of your own" "$(flat "$_o")"
+has "...and says the rest is the kit's"       "The other 1 is the kit's own tpch sample" "$(flat "$_o")"
+# The caveat belongs to the copy, not to the question before it.
+has "the caveat is said with the copy"        "an empty string arrives as NULL" "$_o"
 check "only the user's tables are copied out"        "2" "$(calls "$H" exapump | grep -c '^export')"
 # The export names its table as a quoted query, so that is what the log holds.
 check "the unchanged sample table is not"            "0" "$(calls "$H" exapump | grep '^export' | grep -c '"TPCH"."REGION"')"

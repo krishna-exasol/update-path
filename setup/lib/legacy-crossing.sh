@@ -105,16 +105,72 @@ legacy_password_file() {
 # particular container, and a machine can have another one installed.
 legacy_engine_name() {
     [ -n "${EXAKIT_LEGACY_ENGINE:-}" ] && { printf '%s' "$EXAKIT_LEGACY_ENGINE"; return 0; }
+    # The engine actually resolved, so the record and every message name the
+    # one the container is really in. Only when nothing resolves does the
+    # recorded name stand on its own, so a message can still say what is
+    # missing.
+    _len_path="$(legacy_engine)"
+    if [ -n "$_len_path" ]; then
+        _len_base="${_len_path##*/}"
+        printf '%s' "${_len_base%.exe}"
+        return 0
+    fi
     manifest_get runtime.engine 2>/dev/null || true
 }
 
-# legacy_engine — that engine as a runnable path, or empty. One that is named
-# but no longer on PATH answers empty, which is what makes the migrate option
-# offer itself as unavailable rather than fail halfway through.
+# legacy_engine — the engine that can actually reach this database, as a
+# runnable path, or empty.
+#
+# THE RECORDED NAME IS A HINT, NOT THE ANSWER. The old kit ran the container
+# under Docker when it was there and Podman otherwise, and it wrote whichever
+# it used into runtime.engine. A machine where that key is missing (an older
+# record), or where the user has since moved from one engine to the other, then
+# had its container declared unreachable - "the container engine this database
+# needs is not on this machine any more" - with the container sitting right
+# there in the other engine, and the install went on to hit the port it holds.
+# So: the recorded engine first, and if that cannot be run, whichever engine on
+# this machine actually holds the recorded container. Docker before Podman,
+# the order the old kit preferred. Probed once per run; each probe is a process
+# start.
+_EXAKIT_LEGACY_ENGINE_PATH=""
+_EXAKIT_LEGACY_ENGINE_PROBED=0
 legacy_engine() {
-    _le_name="$(legacy_engine_name)"
-    [ -n "$_le_name" ] || return 0
-    command -v "$_le_name" 2>/dev/null || true
+    if [ -n "${EXAKIT_LEGACY_ENGINE:-}" ]; then
+        command -v "$EXAKIT_LEGACY_ENGINE" 2>/dev/null || true
+        return 0
+    fi
+    if [ "$_EXAKIT_LEGACY_ENGINE_PROBED" = 1 ]; then
+        printf '%s' "$_EXAKIT_LEGACY_ENGINE_PATH"
+        return 0
+    fi
+    _le_path=""
+    _le_recorded="$(manifest_get runtime.engine 2>/dev/null || true)"
+    [ -n "$_le_recorded" ] && _le_path="$(command -v "$_le_recorded" 2>/dev/null || true)"
+    if [ -z "$_le_path" ]; then
+        _le_container="$(legacy_container)"
+        if [ -n "$_le_container" ]; then
+            for _le_try in docker podman; do
+                _le_bin="$(command -v "$_le_try" 2>/dev/null || true)"
+                [ -n "$_le_bin" ] || continue
+                if exakit_run_bounded "${EXAKIT_ENGINE_PROBE_TIMEOUT:-20}" \
+                       "$_le_bin" container inspect "$_le_container" >/dev/null 2>&1; then
+                    _le_path="$_le_bin"
+                    break
+                fi
+            done
+        fi
+    fi
+    _EXAKIT_LEGACY_ENGINE_PATH="$_le_path"
+    _EXAKIT_LEGACY_ENGINE_PROBED=1
+    printf '%s' "$_le_path"
+}
+
+# legacy_forget_engine — drop the cached answer, for the tests that change what
+# is on PATH between scenarios.
+legacy_forget_engine() {
+    _EXAKIT_LEGACY_ENGINE_PATH=""
+    _EXAKIT_LEGACY_ENGINE_PROBED=0
+    return 0
 }
 
 # legacy_remember_record — the old record, copied under legacy.* before the
@@ -489,8 +545,28 @@ legacy_export() {
     _lex_bad=0
     _lex_total=$#
     _lex_n=0
+    # A BAR, NOT A SPINNER PER TABLE. Copying a database out is the one long
+    # stretch of the crossing, and a spinner says only "still going"; the bar
+    # says how much of it is left, in the same shape the deploy and the dataset
+    # loads use. Live only on a real terminal: ui_progress_begin answers 0
+    # elsewhere and the labels below then narrate nothing, exactly as before.
+    # It owns the animation slot, so run_logged's own spinner nests into it.
+    _lex_state=""
+    _lex_live=0
+    if [ "$_lex_total" -gt 0 ]; then
+        _lex_state="$(mktemp "${TMPDIR:-/tmp}/exakit-legacy-out.XXXXXX" 2>/dev/null || true)"
+    fi
+    if [ -n "$_lex_state" ]; then
+        ui_progress_state "$_lex_state" 0 0 1 "Copying $_lex_total table(s) out of the old database"
+        ui_progress_begin "$_lex_state" "$(date +%s 2>/dev/null || echo 0)" && _lex_live=1
+    fi
     for _lex_t in "$@"; do
         _lex_n=$(( _lex_n + 1 ))
+        if [ "$_lex_live" = 1 ]; then
+            ui_progress_state "$_lex_state" \
+                $(( (_lex_n - 1) * 100 / _lex_total )) $(( _lex_n * 100 / _lex_total )) 4 \
+                "Copying out $_lex_t ($_lex_n of $_lex_total)"
+        fi
         _lex_schema="${_lex_t%%.*}"
         _lex_table="${_lex_t#*.}"
         # The file name is positional, not derived from the table name: a
@@ -523,6 +599,11 @@ legacy_export() {
             _lex_bad=$(( _lex_bad + 1 ))
         fi
     done
+    if [ "$_lex_live" = 1 ]; then
+        ui_progress_end
+        ok "Copied $_lex_ok of $_lex_total table(s) out"
+    fi
+    [ -n "$_lex_state" ] && rm -f "$_lex_state"
     EXAKIT_ACTIVE_LABEL=""
     manifest_set legacy.exported "$_lex_ok"
     [ "$_lex_bad" -gt 0 ] && manifest_set legacy.export_failed "$_lex_bad"
@@ -531,6 +612,23 @@ legacy_export() {
 
 # legacy_new_db_answers — a real query against the NEW database through the
 # kit's own profile: the gate in front of every restore.
+# legacy_is_sample_table <SCHEMA.TABLE> — would a bundled dataset create this
+# table? Then it is not restored.
+#
+# The unchanged sample tables never leave the old database at all (see
+# legacy_classify). A CHANGED one does come across, and it used to be restored
+# after the sample load, where the "this table already exists" gate kept the
+# copy on disk instead of overwriting the kit's own. Restoring before that load
+# moves the collision: the dataset's CREATE OR REPLACE would land on top of the
+# user's rows minutes later. So the answer is the same either way - the copy is
+# kept, the table is not restored, and the message says where it is - and now it
+# does not depend on which of the two ran first.
+legacy_is_sample_table() {
+    _list_is_st="$(legacy_sample_catalog 2>/dev/null || true)"
+    [ -n "$_list_is_st" ] || return 1
+    printf '%s\n' "$_list_is_st" | cut -d'|' -f1 | grep -qx "$1"
+}
+
 legacy_new_db_answers() {
     "$(exapump_cli)" sql -p "$EXAKIT_EXAPUMP_PROFILE" \
         "SELECT 'EXAKIT_NEW_OK' AS P" 2>/dev/null | grep -q 'EXAKIT_NEW_OK'
@@ -552,6 +650,19 @@ legacy_import() {
     legacy_new_db_answers || return 1
     _lim_ok=0; _lim_skipped=0; _lim_bad=0
     _lim_skipped_names=""
+    # The same bar on the way back in. The total is the index's line count, so
+    # a copy that failed halfway still reports against what there is to restore.
+    _lim_total="$(grep -c . "$_lim_dir/index" 2>/dev/null || echo 0)"
+    _lim_n=0
+    _lim_state=""
+    _lim_live=0
+    if [ "${_lim_total:-0}" -gt 0 ]; then
+        _lim_state="$(mktemp "${TMPDIR:-/tmp}/exakit-legacy-in.XXXXXX" 2>/dev/null || true)"
+    fi
+    if [ -n "$_lim_state" ]; then
+        ui_progress_state "$_lim_state" 0 0 1 "Restoring $_lim_total table(s) into the new database"
+        ui_progress_begin "$_lim_state" "$(date +%s 2>/dev/null || echo 0)" && _lim_live=1
+    fi
     while IFS="$(printf '\t')" read -r _lim_file _lim_schema _lim_table _lim_ddl; do
         [ -n "$_lim_file" ] || continue
         # A line with fewer than three fields names no table. Without this a
@@ -560,6 +671,24 @@ legacy_import() {
         [ -n "$_lim_schema" ] && [ -n "$_lim_table" ] || continue
         [ -f "$_lim_dir/$_lim_file" ] || continue
         _lim_target="\"$_lim_schema\".\"$_lim_table\""
+        _lim_n=$(( _lim_n + 1 ))
+        if [ "$_lim_live" = 1 ]; then
+            ui_progress_state "$_lim_state" \
+                $(( (_lim_n - 1) * 100 / _lim_total )) $(( _lim_n * 100 / _lim_total )) 4 \
+                "Restoring $_lim_schema.$_lim_table ($_lim_n of $_lim_total)"
+        fi
+        # A TABLE A BUNDLED DATASET WILL CREATE IS LEFT IN THE COPY. The
+        # restore runs before the sample load now, so "it already exists" no
+        # longer catches this: the dataset's CREATE OR REPLACE would land on
+        # top of these rows minutes later. The outcome is the one the old
+        # ordering gave - the copy is kept and named - and it no longer depends
+        # on which of the two ran first. (Unchanged sample tables never leave
+        # the old database at all; see legacy_classify.)
+        if legacy_is_sample_table "$_lim_schema.$_lim_table"; then
+            _lim_skipped=$(( _lim_skipped + 1 ))
+            _lim_skipped_names="$_lim_skipped_names $_lim_schema.$_lim_table"
+            continue
+        fi
         EXAKIT_ACTIVE_LABEL="Restoring $_lim_schema.$_lim_table"
         # CREATE SCHEMA is unconditional and harmless; CREATE TABLE is the test
         # for "does this already exist", so its failure is not an error here.
@@ -581,6 +710,10 @@ legacy_import() {
             _lim_bad=$(( _lim_bad + 1 ))
         fi
     done < "$_lim_dir/index"
+    if [ "$_lim_live" = 1 ]; then
+        ui_progress_end
+    fi
+    [ -n "$_lim_state" ] && rm -f "$_lim_state"
     EXAKIT_ACTIVE_LABEL=""
     manifest_set legacy.restored "$_lim_ok"
     [ "$_lim_skipped" -gt 0 ] && manifest_set legacy.restore_skipped "$_lim_skipped"
@@ -621,7 +754,15 @@ legacy_crossing_before() {
     # ticks still standing.
     legacy_forget_old_steps
 
-    [ "$(manifest_get legacy.crossing_done 2>/dev/null || true)" = "true" ] && return 0
+    # DONE MEANS ASKED AND ANSWERED, NOT "LEAVE THE PORT ALONE". The container
+    # publishes the port the new deployment needs, so a crossing that is over
+    # must still take it out of the way - without this the install died on
+    # "port 8563 is in use" on every later run, with no way forward but a
+    # docker stop by hand.
+    if [ "$(manifest_get legacy.crossing_done 2>/dev/null || true)" = "true" ]; then
+        legacy_stop_container >/dev/null 2>&1 || true
+        return 0
+    fi
 
     # An earlier attempt at THIS install already answered. Finish the leftover
     # work and say nothing: the question was asked, and asking again (or
@@ -644,13 +785,18 @@ legacy_crossing_before() {
     # THE PROBE COMES BEFORE THE BANNER. Whether there is a database worth
     # talking about is answerable without saying a word, and if the answer is
     # no this function has nothing to tell anyone.
-    _lcb_can=yes; _lcb_why=""
+    # _lcb_retry SEPARATES A CONDITION FROM A DECISION. "There is nothing to
+    # copy" is settled forever; "this machine cannot read it right now" is not,
+    # and marking the second one done cost a user their data permanently: one
+    # run could not see the engine, wrote the crossing off as finished, and no
+    # later run - with the engine right there - ever offered again.
+    _lcb_can=yes; _lcb_why=""; _lcb_retry=0
     if [ -z "$(legacy_engine)" ]; then
-        _lcb_can=no; _lcb_why="the container engine this database needs is not on this machine any more"
+        _lcb_can=no; _lcb_retry=1; _lcb_why="the container engine this database needs is not on this machine any more"
     elif [ "$_lcb_state" = "absent" ]; then
         _lcb_can=no; _lcb_why="the container is gone, so there is nothing left to copy"
     elif ! command -v "$(exapump_cli)" >/dev/null 2>&1 && [ ! -x "$(exapump_cli)" ]; then
-        _lcb_can=no; _lcb_why="exapump is not installed, and it is what reads the tables out"
+        _lcb_can=no; _lcb_retry=1; _lcb_why="exapump is not installed yet, and it is what reads the tables out"
     fi
 
     # A stopped container still holds the data, so it is started - but quietly,
@@ -660,7 +806,7 @@ legacy_crossing_before() {
         if legacy_start_container; then
             _lcb_started=1
         else
-            _lcb_can=no; _lcb_why="the old container would not start"
+            _lcb_can=no; _lcb_retry=1; _lcb_why="the old container would not start"
         fi
     fi
 
@@ -674,10 +820,10 @@ legacy_crossing_before() {
             if legacy_wait_db_answers "$_lcb_budget"; then
                 _lcb_tables="$(legacy_tables)"
             else
-                _lcb_can=no; _lcb_why="the old database did not answer in time"
+                _lcb_can=no; _lcb_retry=1; _lcb_why="the old database did not answer in time"
             fi
         else
-            _lcb_can=no; _lcb_why="the password for the old database is not on file, so it cannot be read"
+            _lcb_can=no; _lcb_retry=1; _lcb_why="the password for the old database is not on file, so it cannot be read"
         fi
     fi
 
@@ -703,24 +849,41 @@ legacy_crossing_before() {
     # and the crossing is marked done so this is never reconsidered.
     if [ "$_lcb_can" != yes ]; then
         _exakit_log_file "INFO  legacy crossing: no offer made — $_lcb_why" 2>/dev/null || true
+        # Either way the container may be holding the port the new deployment
+        # needs, whether or not its data could be read.
+        legacy_stop_container >/dev/null 2>&1 || true
+        if [ "$_lcb_retry" = 1 ]; then
+            # A CONDITION, NOT A DECISION: nothing is recorded as chosen and
+            # the crossing is not closed, so the next run - on a machine where
+            # the obstacle is gone - asks the question this one could not.
+            manifest_set legacy.offer_blocked "$_lcb_why"
+            return 0
+        fi
         manifest_set legacy.choice "skip"
         manifest_set legacy.crossed_from "$_lcb_type"
         [ "$_lcb_sample" -gt 0 ] && manifest_set legacy.sample_left_out "$EXAKIT_LEGACY_SAMPLE_IDS"
         manifest_set legacy.crossing_done true
-        # It may still be holding the port, whether or not its data is readable.
-        legacy_stop_container >/dev/null 2>&1 || true
         return 0
     fi
 
     # Past all three gates: there is a real database with real tables in it,
     # and this is the one and only time the user is asked about it.
     echo
-    warn "This machine has a starter kit installation whose database runs in a container."
-    info "This kit deploys Exasol Personal instead, so that container is not something it can manage."
-    [ -n "$_lcb_container" ] && info "The old database is the container '$_lcb_container' ($_lcb_state)."
-    info "It holds $_lcb_total table(s). Copying them takes a few minutes and changes nothing in the old database."
-    [ "$_lcb_sample" -gt 0 ] && legacy_sample_note "$_lcb_count" "$_lcb_sample"
-    info "One caveat worth knowing: a text column that held an empty string arrives as NULL."
+    # ONE LINE, THEN THE QUESTION. This was six lines of explanation before a
+    # yes/no - what the kit no longer manages, what it deploys instead, what
+    # the copy costs, which tables are the kit's own, and a caveat about empty
+    # strings - all of it ahead of a decision that needs the name, the size and
+    # nothing else. What survives: the container, its state, and how much of
+    # the user's own data is in it. The caveat moves to the copy itself, where
+    # it is about to matter; the rest is in the docs.
+    _lcb_schemas="$(printf '%s\n' "${EXAKIT_LEGACY_OWN_TABLES:-}" | sed -n 's/\..*$//p' | sort -u | grep -c . 2>/dev/null || echo 0)"
+    _lcb_where=""
+    [ -n "$_lcb_container" ] && _lcb_where=" in the container '$_lcb_container' ($_lcb_state)"
+    _lcb_mine="$_lcb_count table(s)"
+    [ "${_lcb_schemas:-0}" -gt 0 ] && _lcb_mine="$_lcb_mine in $_lcb_schemas schema(s)"
+    _lcb_rest=""
+    [ "$_lcb_sample" -gt 0 ] && _lcb_rest=" The other $_lcb_sample is the kit's own $EXAKIT_LEGACY_SAMPLE_IDS sample, which this install loads itself."
+    info "Found your previous starter kit's database$_lcb_where: $_lcb_mine of your own.$_lcb_rest"
 
     legacy_choose "$_lcb_count" "$_lcb_can" "$_lcb_why"
     manifest_set legacy.choice "$EXAKIT_LEGACY_CHOICE"
@@ -728,7 +891,9 @@ legacy_crossing_before() {
     [ "$_lcb_sample" -gt 0 ] && manifest_set legacy.sample_left_out "$EXAKIT_LEGACY_SAMPLE_IDS"
 
     if [ "$EXAKIT_LEGACY_CHOICE" = "migrate" ]; then
-        info "Copying $_lcb_count table(s) out of the old database"
+        # Said here, not before the question: it is about the copy that is
+        # starting, and it only matters to someone who asked for one.
+        info "Copying now - nothing in the old database is changed. One thing to know: a text column that held an empty string arrives as NULL."
         # ONE ARGUMENT PER LINE, NOT PER WORD. The list is newline-separated
         # because a schema or table name may contain a space ("My Schema" is
         # legal in Exasol), and the first version of this handed the list to

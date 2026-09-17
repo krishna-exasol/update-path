@@ -374,7 +374,7 @@ check "and the crossing is marked done" "true" \
 # THE BANNER IS BEHIND THE PROBE, not in front of it. A function that printed
 # first and probed second could not be silent, whatever the gates decided.
 _cb="$(sed -n '/^legacy_crossing_before()/,/^}/p' "$ROOT/setup/lib/legacy-crossing.sh")"
-_banner_at="$(printf '%s\n' "$_cb" | grep -n 'runs in a container' | head -1 | cut -d: -f1)"
+_banner_at="$(printf '%s\n' "$_cb" | grep -n 'Found your previous starter kit' | head -1 | cut -d: -f1)"
 _probe_at="$(printf '%s\n' "$_cb" | grep -n 'legacy_container_state' | head -1 | cut -d: -f1)"
 check "the probe runs before the banner" "yes" \
     "$([ -n "$_banner_at" ] && [ -n "$_probe_at" ] && [ "$_probe_at" -lt "$_banner_at" ] && echo yes || echo no)"
@@ -588,6 +588,137 @@ has "...and the remembered port"           '"dsn": "127.0.0.1:9999"' "$_o"
 lacks "the sh CLI has no --password option that works" '--password)' "$(sed -n '/^cmd_migrate()/,/^}/p' "$ROOT/setup/exakit" | grep -v 'password-file' | grep -v 'reject')"
 has "the sh prompt does not echo"          'read -rs' "$(cat "$ROOT/setup/exakit")"
 has "the ps prompt does not echo"          'Read-Host -AsSecureString' "$(cat "$ROOT/setup/exakit.ps1")"
+
+echo
+echo "a crossing that could not ask is not a crossing that was answered:"
+
+# A CONDITION IS NOT A DECISION. One run could not see the container engine,
+# wrote the crossing off as finished ("no offer made"), and every later run -
+# with the engine right there - returned at that gate: the question was never
+# asked again, and the container went on holding port 8563, so the install died
+# at the database step every single time with no way forward but a docker stop
+# by hand. Seen on a real Windows machine, twice in a row.
+CROSS_SRC="$(cat "$ROOT/setup/lib/legacy-crossing.sh")"
+CROSS_PS="$(cat "$ROOT/setup/lib/legacy-crossing.ps1")"
+
+# The four environmental reasons are retryable; the three intrinsic ones are not.
+for _why in \
+    'the container engine this database needs is not on this machine any more' \
+    'exapump is not installed yet, and it is what reads the tables out' \
+    'the old container would not start' \
+    'the old database did not answer in time'; do
+    _line="$(printf '%s\n' "$CROSS_SRC" | grep -F "$_why" | head -1)"
+    has "retryable: $(printf '%s' "$_why" | cut -c1-34)" "_lcb_retry=1" "$_line"
+done
+has "retryable: the password is not on file" "_lcb_retry=1" \
+    "$(printf '%s\n' "$CROSS_SRC" | grep -F 'the password for the old database is not on file' | head -1)"
+for _why in \
+    'the container is gone, so there is nothing left to copy' \
+    'the old database has no tables in it' \
+    'unchanged, which this install loads itself'; do
+    _line="$(printf '%s\n' "$CROSS_SRC" | grep -F "$_why" | head -1)"
+    lacks "settled: $(printf '%s' "$_why" | cut -c1-34)" "_lcb_retry=1" "$_line"
+done
+
+# The retryable branch records nothing as chosen and does not close the
+# crossing, so the next run asks what this one could not.
+_retry_branch="$(printf '%s\n' "$CROSS_SRC" | sed -n '/if \[ "\$_lcb_retry" = 1 \]; then/,/fi/p')"
+has   "a blocked offer records why"            'manifest_set legacy.offer_blocked' "$_retry_branch"
+lacks "...and never records a choice"          'legacy.choice' "$_retry_branch"
+lacks "...and never closes the crossing"       'crossing_done' "$_retry_branch"
+# ...and either way the container stops, because it holds the port.
+_decline="$(printf '%s\n' "$CROSS_SRC" | sed -n '/legacy crossing: no offer made/,/^    fi$/p')"
+has "a declined offer still frees the port"    'legacy_stop_container' "$_decline"
+# The done-gate frees it too: that is the run that used to die at step 2.
+_done_gate="$(printf '%s\n' "$CROSS_SRC" | sed -n '/crossing_done 2>\/dev\/null || true)" = "true" \]; then/,/^    fi$/p')"
+has "a crossing already done still frees the port" 'legacy_stop_container' "$_done_gate"
+
+# And the PowerShell twin says all of it the same way.
+has "ps: the done-gate frees the port too"   'Stop-LegacyContainer -Quiet' \
+    "$(printf '%s\n' "$CROSS_PS" | sed -n '/legacy.crossing_done") -eq "True") {/,/^    }$/p')"
+has "ps: a blocked offer records why"        'legacy.offer_blocked' "$CROSS_PS"
+has "ps: the engine reason is retryable"     '$retry = $true' \
+    "$(printf '%s
+' "$CROSS_PS" | grep -F 'retry = $true; $why = "the container engine' | head -1)"
+lacks "ps: a gone container is settled"      '$retry = $true' \
+    "$(printf '%s\n' "$CROSS_PS" | grep -F 'nothing left to copy' | head -1)"
+
+echo
+echo "the engine is the one that actually holds the container, not just the one recorded:"
+
+# THE RECORDED NAME IS A HINT, NOT THE ANSWER. The old kit ran the container
+# under Docker when it was there and Podman otherwise, and wrote whichever it
+# used into runtime.engine. A record written without that key, or a user who
+# has since moved from one engine to the other, had the whole crossing declined
+# - "the container engine this database needs is not on this machine any more"
+# - with the container sitting in the other engine, and the install then walked
+# straight into the port it holds. Seen on a real Windows machine: Docker
+# Desktop running the container, runtime.engine absent from the record.
+ENGWORK="$WORK/engines"
+mkdir -p "$ENGWORK/bin"
+# Two stub engines. Only the one named in HOLDER admits to having the
+# container; every call is recorded, so the probe ORDER can be asserted too.
+for _eng in docker podman; do
+    cat > "$ENGWORK/bin/$_eng" <<STUBEOF
+#!/bin/sh
+printf '%s %s\n' "$_eng" "\$*" >> "$ENGWORK/calls"
+case "\$1 \$2" in
+  "container inspect")
+      case "\${HOLDER:-}" in
+          "$_eng"|both) printf 'deadbeef\n'; exit 0 ;;
+      esac
+      exit 1 ;;
+esac
+exit 0
+STUBEOF
+    chmod +x "$ENGWORK/bin/$_eng"
+done
+
+_eng_seq=0
+eng_probe() { # eng_probe <recorded-engine> <holder> <expression>
+    _eng_seq=$((_eng_seq + 1))
+    _ep_home="$ENGWORK/home-$_eng_seq"
+    seed_home "$_ep_home"
+    # Rewrite the recorded engine to the case under test; an empty first
+    # argument removes the key altogether, which is the older-record case.
+    if [ -n "$1" ]; then
+        sed 's/"engine": "fakeengine"/"engine": "'"$1"'"/' "$_ep_home/manifest.json" > "$_ep_home/m.tmp"
+    else
+        grep -v '"engine":' "$_ep_home/manifest.json" > "$_ep_home/m.tmp"
+    fi
+    mv "$_ep_home/m.tmp" "$_ep_home/manifest.json"
+    : > "$ENGWORK/calls"
+    EXAKIT_HOME="$_ep_home" EXAKIT_BIN_DIR="$_ep_home/bin" HOLDER="$2" \
+    PATH="$ENGWORK/bin:/usr/bin:/bin" ROOT="$ROOT" \
+    bash -c '
+        . "$ROOT/setup/lib/common.sh"
+        . "$ROOT/setup/lib/detect.sh"
+        . "$ROOT/setup/lib/exapump.sh"
+        . "$ROOT/setup/lib/legacy-crossing.sh"
+        '"$3"' ' 2>&1
+}
+
+check "no engine recorded, docker holds it"  "docker" "$(eng_probe "" docker 'legacy_engine_name')"
+check "no engine recorded, podman holds it"  "podman" "$(eng_probe "" podman 'legacy_engine_name')"
+check "no engine recorded, neither holds it" ""       "$(eng_probe "" none 'legacy_engine_name')"
+check "...and the path is empty too"         ""       "$(eng_probe "" none 'legacy_engine')"
+# A recorded engine that IS on PATH is used as it always was - and nothing else
+# is probed, because a working record must not cost two more process starts.
+check "a recorded engine on PATH is used"    "podman" "$(eng_probe podman docker 'legacy_engine_name')"
+eng_probe podman docker 'legacy_engine >/dev/null' >/dev/null
+lacks "...without probing the other one"     "container inspect" "$(cat "$ENGWORK/calls" 2>/dev/null)"
+# A recorded engine that is GONE falls back to the one that has the container.
+check "a recorded engine that is gone falls back" "docker" "$(eng_probe uninstalled-engine docker 'legacy_engine_name')"
+check "...and reports its real path"  "$ENGWORK/bin/docker" "$(eng_probe uninstalled-engine docker 'legacy_engine')"
+# Docker before Podman, the order the old kit preferred: with both holding it,
+# docker answers and podman is never asked.
+check "docker is asked before podman"        "docker" "$(eng_probe "" both 'legacy_engine_name')"
+# An explicit override always wins, even over a container it cannot see.
+check "EXAKIT_LEGACY_ENGINE overrides everything" "podman" \
+    "$(EXAKIT_LEGACY_ENGINE=podman eng_probe "" docker 'legacy_engine_name')"
+# And the container's state reads through whatever was resolved.
+check "the state reads through the resolved engine" "unknown" \
+    "$(eng_probe "" docker 'legacy_container_state')"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
